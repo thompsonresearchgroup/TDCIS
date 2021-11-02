@@ -1,0 +1,56 @@
+Main/TDCIS
+
+NAME
+      Real-Time Truncated Configuration Interaction Time Evolution Calculator
+SYNOPSIS
+      Propagates a truncated configuration interaction wavefunction in time
+      using specified initial conditions.
+USAGE
+      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--sub-levels substitutions] 
+        [--intial-cond weight_vector] [--time-step time_step] [--steps steps] [--help]
+OPTIONS
+      -f matrix_file                   Input matrix file with initial set of molecular orbitals.
+
+      --print-level print_level        Verbosity of output. Default print level is 1. Options
+                                       0-4.
+
+      --sub-levels substitutions       Substitution levels permitted in truncated CI calculation. 
+
+      --initial-cond weight_vector     Initial state for simulation. For a pure state, the  
+                                       desired root can be input as a single integer. For a 
+                                       mixed state, each non-zero weighted root should be 
+                                       included along wih the specified weight (Default is
+                                       a ground state population of 1.0).  
+                                   
+                                       Example: [1,0.5:2,0.5] specifies an initial state with 
+                                       50% weight on the lowest root and 50% weight on the 
+                                       fourth root.
+
+      --time-step time_step            Time step for simulation (default 0.1 au).
+
+      --steps steps                    Number of steps to include in the calculation (default is 1000). 
+
+      --help                           Output help documentation to terminal.
+
+NOTES
+      Compilation of this program requires the MQC library (https://github.com/MQCPack/mqcPack)
+      and the gauopen utility (http://gaussian.com/g16/gauopen.zip) and compilation with the
+      f08 standard.
+
+      Compilation tested using: gfortran 9.2.0
+
+      Note that subroutine Wr_LCBuf needs modifying in gauopen/qcmatrix.F as follows:
+        line 58:       LenBX = (LenBuf/(2*abs(NR)))*abs(NR)
+        line 60:       Call Wr_CBuf(IU,NTot*abs(NR),LenBX,X)
+
+      Documentation generated with robodoc. To update documentation edit robodoc.rc to
+      determine documentation output type and then run robodoc at the command line in the
+      main directory.
+
+    AUTHORS
+      Lee M. Thompson, University of Louisville, lee.thompson.1@lousiville.edu
+COPYRIGHT
+      (c) 2021-2020 by Andrew D. Mahler and Lee M. Thompson distributed under terms of the
+      MIT license.
+
+---------------------------------------------------------------------------

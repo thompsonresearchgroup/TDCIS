@@ -1,0 +1,38 @@
+#
+# TDCIS ROBODoc control file 
+# 
+# L. M. Thompson 01/11/21
+#
+options:
+    --src . 
+    --doc ./doc/TDCIS
+    --singledoc 
+#    --html
+#    --latex
+#    --rtf
+    --ascii
+    --documenttitle "TD-CIS Calculator"
+    --tabsize 8
+items:
+    SYNOPSIS
+    NAME
+    COPYRIGHT
+    USAGE
+    AUTHOR
+    OPTIONS
+    NOTES
+headertypes:
+    x  "Main Program"  main 
+header markers:
+    !****
+end markers:
+    !****
+remark begin markers:
+    !*
+remark end markers:
+    !*
+remark markers:
+    !*
+source line comments:
+    !
+
