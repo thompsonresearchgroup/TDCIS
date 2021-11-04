@@ -18,27 +18,28 @@
       implicit none
       character(len=:),allocatable::command,fileName,help_path
       type(mqc_gaussian_unformatted_matrix_file)::fileInfo 
-      integer(kind=int64)::iOut=6,iPrint=1,i,j,maxsteps,elems,flag
-      real(kind=real64)::delta_t=0.1,field_size=1.0,simTime=100.0,t0=0.0,sigma=0.5,omega=10.0,&
+      integer(kind=int64)::iOut=6,iPrint=1,iUnit,i,j,maxsteps,flag,stat_num
+      real(kind=real64)::delta_t=0.1,field_size=0.005,simTime=100.0,t0=0.0,sigma=0.5,omega=10.0,&
         beta=3.0
+      real(kind=real64),allocatable::tcf_start
       complex(kind=real64)::imag=(0.0,1.0)
-      logical::UHF
+      logical::UHF,file_exists
       type(mqc_pscf_wavefunction)::wavefunction
       type(mqc_molecule_data)::moleculeInfo
       type(mqc_twoERIs)::eris,mo_ERIs
       type(mqc_scalar)::Vnn,final_energy
       type(mqc_determinant)::determinants
-      type(mqc_scf_integral)::mo_core_ham
-      type(mqc_scf_integral),dimension(3)::dipole
-      type(mqc_matrix)::CI_Hamiltonian,exp_CI_Hamiltonian,density,iden
+      type(mqc_scf_integral)::mo_core_ham,density
+      type(mqc_scf_integral),dimension(3)::dipole,dipoleMO
+      type(mqc_matrix)::CI_Hamiltonian,exp_CI_Hamiltonian,iden
       type(mqc_matrix),dimension(3)::CI_Dipole,dipole_eigvecs
-      type(mqc_vector)::subs,nuclear_dipole,state_coeffs,td_ci_coeffs,Dmatrix,field_vector,&
-        td_field_vector
+      type(mqc_vector)::subs,nuclear_dipole,total_dipole,state_coeffs,td_ci_coeffs,field_vector,&
+        td_field_vector,tcf_ci_epsilon,tcf
       type(mqc_vector),dimension(3)::dipole_eigvals
       integer(kind=int64),dimension(:),allocatable::isubs
       type(mqc_vector),dimension(2)::nRoot
       character(len=256)::vecString,root_string='',sub_string='',field_string='',&
-        pulseShape='rectangle'
+        pulseShape='rectangle',tcf_file='tcf',file_tmp
 !
 !*    USAGE
 !*      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--sub-levels substitutions] 
@@ -135,7 +136,8 @@
         elseif(command.eq.'--field-size') then
 !
 !*      --field-size field_magnitude     Maximum magnitude of field vector in simulation (au)
-!*                                       (default is 1.0).
+!*                                       (default is 0.005 au = 25.7 MV/cm = 1.752 W/m^2 in free
+!*                                       space conditions).
 !*
           call mqc_get_command_argument(i+1,command)
           read(command,'(F12.6)') field_size
@@ -168,6 +170,16 @@
 !*
           call mqc_get_command_argument(i+1,command)
           read(command,'(F12.6)') sigma
+          j = i + 2
+        elseif(command.eq.'--tcf-start') then
+!
+!*      --tcf-start time                 Compute time correlation function starting from input time. The 
+!*                                       Fourier transform of this function when the start time is the time 
+!*                                       step after the delta pulse provides the absorption spectrum.
+!*
+          call mqc_get_command_argument(i+1,command)
+          allocate(tcf_start)
+          read(command,'(F12.6)') tcf_start
           j = i + 2
         elseif(command.eq.'--time-step') then
 !
@@ -273,13 +285,14 @@
       nuclear_dipole = matmul(transpose(moleculeInfo%Nuclear_Charges),&
         transpose(moleculeInfo%Cartesian_Coordinates))
       if(iPrint.ge.1) call nuclear_dipole%print(6,'Nuclear dipole',Blank_At_Bottom=.true.)
+      call total_dipole%init(3)
 
       do i = 1, 3
-        dipole(i) = matmul(transpose(wavefunction%MO_Coefficients),&
+        dipoleMO(i) = matmul(dagger(wavefunction%MO_Coefficients),&
           matmul(dipole(i),Wavefunction%MO_Coefficients))
-        if(iprint.ge.4) call dipole(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)))
+        if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)))
         call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis,determinants, &
-          dipole(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i),subs=isubs)
+          dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i),subs=isubs)
         if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)))
         call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
         CI_Dipole(i) = iden - CI_Dipole(i)
@@ -341,43 +354,14 @@
 !     Do loops over time-steps and propagate CI coefficients in each time step using eq. 16 of 
 !     Krause et al. J. Phys. Chem., 2007, 127, 034107.
 !
-      write(iOut,'(1X,A)') 'STARTING TIME PROPAGATION'
-      write(iOut,'(1X,A)')               ''
+      write(iOut,'(1X,A)') 'STARTING TIME PROPAGATION'//NEW_LINE('A')
       do i = 1, maxsteps
         if(iPrint.ge.1) write(iOut,'(1X,A)') repeat('=',44)//NEW_LINE('A')
         if(i.eq.maxsteps) write(iOut,'(1X,A)') repeat(' ',16)//'FINAL TIME STEP'//NEW_LINE('A')//NEW_LINE('A')//&
         ' '//repeat('=',44)//NEW_LINE('A')
         if(iPrint.ge.1) write(iOut,'(1X,A,1X,F12.6,1X,A)') 'Time step:',delta_t*i,'au'//NEW_LINE('A')
 
-        select case(pulseShape)
-        case('rectangle')
-          if(delta_t*i.ge.t0) then
-            td_field_vector = field_vector
-          else
-            td_field_vector = [0.0,0.0,0.0]
-          endIf
-        case('delta')
-          if(delta_t*i.ge.t0.and.t0.lt.delta_t*(i+1)) then
-            td_field_vector = field_vector
-          else
-            td_field_vector = [0.0,0.0,0.0]
-          endIf
-        case('continuous')
-          if(delta_t*i.ge.t0) then
-            td_field_vector = field_vector*sin(omega*(delta_t*i-t0))
-          else
-            td_field_vector = [0.0,0.0,0.0]
-          endIf
-        case('transform limited')
-          td_field_vector = field_vector*exp((-(delta_t*i-t0)**2)/(2*sigma**2))*&
-            sin(omega*(delta_t*i-t0))
-        case('chirped pulse')
-          td_field_vector = field_vector*exp((-(delta_t*i-t0)**2)/(2*sigma**2))*&
-            sin((omega+beta*(delta_t*i-t0))*(delta_t*i-t0))
-        case default
-          call mqc_error_a('Unrecognized pulse shape requested',6,'pulseShape',pulseShape)
-        end select
-
+        td_field_vector = get_field_vector(delta_t,i,field_vector,pulseShape,t0,omega,sigma,beta)
         if(iPrint.ge.1) call td_field_vector%print(6,'Applied field vector',Blank_At_Bottom=.true.)
 
         state_coeffs = exp((-1)*imag*delta_t*wavefunction%pscf_energies).ewp.state_coeffs
@@ -386,39 +370,52 @@
           state_coeffs = exp(imag*delta_t*td_field_vector%at(j)*dipole_eigvals(j)).ewp.state_coeffs
           state_coeffs = matmul(matmul(dagger(wavefunction%pscf_amplitudes),dipole_eigvecs(j)),state_coeffs)
         endDo
-
-        if(iPrint.ge.2) call state_coeffs%print(6,'State coefficients',Blank_At_Bottom=.true.)
+        call print_coeffs_and_pops(iOut,iPrint,1,state_coeffs,'TD State')
 
         call td_ci_coeffs%init(size(wavefunction%pscf_amplitudes,1))
         do j = 1, size(state_coeffs)
           td_ci_coeffs = td_ci_coeffs + state_coeffs%at(j)*wavefunction%pscf_amplitudes%vat([0],[j])
         endDo
+        call print_coeffs_and_pops(iOut,iPrint,2,td_ci_coeffs,'TD CI')
 
-        if(iPrint.ge.2) then
-          elems = min(3**iPrint,size(td_ci_coeffs))
-          Dmatrix = td_ci_coeffs
-          write(6,'(1x,A)') 'Largest '//trim(num2char(elems))//' TD CI coefficients'
-          vecString = ''
-          do j = 1, elems
-            vecString = trim(vecString)//' '//trim(num2char(maxLoc(abs(Dmatrix)),'I3'))//' = '//&
-              trim(num2char(Dmatrix%at(maxLoc(abs(Dmatrix))),'F10.6'))
-            if(j.ne.elems) vecString = trim(vecString)//', '
-            call Dmatrix%put(0.0,maxLoc(abs(Dmatrix)))
-            if(j.eq.10.or.j.eq.elems) then
-              write(6,'(1x,A)') trim(vecString)
-              vecString = ''
-            endIf
-          endDo
-          write(iOut,'(A)') ''
+        if(allocated(tcf_start)) then
+          if(delta_t*i.ge.tcf_start.and.delta_t*i.lt.tcf_start+delta_t) tcf_ci_epsilon = td_ci_coeffs
+          if(delta_t*i.ge.tcf_start) call tcf%push(dot_product(dagger(tcf_ci_epsilon),td_ci_coeffs))
         endIf
 
         final_energy = get_CI_Energy(CI_Hamiltonian,td_ci_coeffs) 
         if(iPrint.ge.1.or.i.eq.maxsteps) call final_energy%print(6,'Energy (au)',Blank_At_Bottom=.true.,&
           FormatStr='F14.8')
 
-        density = get_one_gamma_matrix(iOut,iPrint,wavefunction%nBasis,determinants,td_ci_coeffs,subs=isubs)
+        density = get_one_gamma_matrix(iOut,iPrint,wavefunction%nBasis,determinants,td_ci_coeffs,UHF,subs=isubs)
         if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'MO Density matrix',Blank_At_Bottom=.true.)
+        density = 0.5*matmul(matmul(wavefunction%mo_coefficients,density),dagger(wavefunction%mo_coefficients))
+        if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'AO Density matrix',Blank_At_Bottom=.true.)
+        do j = 1, 3
+          call total_dipole%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
+        endDo
+        call total_dipole%print(6,'Total dipole',Blank_At_Bottom=.true.)
       endDo
+
+      if(allocated(tcf_start)) then
+        i = 1
+        file_exists = .true.
+        file_tmp = trim(tcf_file)
+        do while (file_exists) 
+          inquire(file=trim(file_tmp)//'.dat',exist=file_exists)
+          if(file_exists) then
+            i = i+1
+            file_tmp = trim(tcf_file)
+            call build_string_add_int(i,file_tmp,20)
+          else
+            open(newunit=iunit,file=trim(file_tmp)//'.dat',status='new',iostat=stat_num)
+            if(stat_num.ne.0) call mqc_error_a('Could not open file',6,'file name',trim(file_tmp)//'.dat')
+            call tcf%print(iUnit,'# time ('//trim(num2char(delta_t))//'as)'//repeat(' ',10)//'time correlation function')
+            write(iOut,'(A)') 'Saving data to file name '//trim(file_tmp)//'.dat'
+          endIf
+        endDo
+      endIf
+
 !
       contains
 !
@@ -437,6 +434,51 @@
       energy = dot_product(matmul(dagger(CI_vectors),CI_Hamiltonian),CI_vectors)
 
       end function get_CI_energy
+!
+!     
+!     PROCEDURE get_field_vector
+!
+!     get_field_vector is a function that returns the field vector at time dt*step. 
+!
+      function get_field_vector(dt,step,static_field,pulseShape,t0,omega,sigma,beta) result(td_field)
+
+      implicit none
+      real(kind=real64),intent(in)::dt,t0,omega,sigma,beta 
+      integer(kind=int64),intent(in)::step
+      type(mqc_vector),intent(in)::static_field
+      type(mqc_vector)::td_field
+      character(len=*)::pulseShape
+
+      select case(pulseShape)
+      case('rectangle')
+        if(dt*step.ge.t0.and.dt*step.lt.t0+sigma) then
+          td_field = static_field
+        else
+          td_field = [0.0,0.0,0.0]
+        endIf
+      case('delta')
+        if(dt*step.ge.t0.and.dt*step.lt.t0+dt) then
+          td_field = static_field
+        else
+          td_field = [0.0,0.0,0.0]
+        endIf
+      case('continuous')
+        if(dt*step.ge.t0.and.dt*step.lt.t0+sigma) then
+          td_field = static_field*sin(omega*(dt*step-t0))
+        else
+          td_field = [0.0,0.0,0.0]
+        endIf
+      case('transform limited')
+        td_field = static_field*exp((-(dt*step-t0)**2)/(2*sigma**2))*&
+          sin(omega*(dt*step-t0))
+      case('chirped pulse')
+        td_field = static_field*exp((-(dt*step-t0)**2)/(2*sigma**2))*&
+          sin((omega+beta*(dt*step-t0))*(dt*step-t0))
+      case default
+        call mqc_error_a('Unrecognized pulse shape requested',6,'pulseShape',pulseShape)
+      end select
+
+      end function get_field_vector
 !
 !
 !     PROCEDURE substitution_builder
@@ -698,6 +740,64 @@
       endIf
 
       end subroutine root_vector_builder
+!    
+!
+!     PROCEDURE print_coeffs_and_pops
+!     
+!     print_coeffs_and_pops is a subroutine that prints coefficients and 
+!     populations of a vector, using the input string to build the label
+!
+      subroutine print_coeffs_and_pops(iOut,iPrint,printThresh,vector,titleString)
+
+      implicit none
+
+!     input/output variables
+      integer(kind=int64),intent(in)::iOut,iPrint,printThresh
+      type(mqc_vector),intent(in)::vector
+      character(len=*),intent(in)::titleString
+
+!     subroutine variables
+      type(mqc_vector)::tmpVec
+      integer(kind=int64)::i,elems
+      character(len=256)::vecString
+
+
+      if(iPrint.ge.printThresh+1) then
+        elems = min(3**iPrint,size(vector))
+        tmpVec = vector
+        write(6,'(1x,A)') 'Largest '//trim(num2char(elems))//' '//trim(titleString)//' coefficients'
+        vecString = ''
+        do i = 1, elems
+          vecString = trim(vecString)//' '//trim(num2char(maxLoc(abs(tmpVec)),'I3'))//' = '//&
+            trim(num2char(tmpVec%at(maxLoc(abs(tmpVec))),'F10.6'))
+          if(i.ne.elems) vecString = trim(vecString)//', '
+          call tmpVec%put(0.0,maxLoc(abs(tmpVec)))
+          if(i.eq.10.or.i.eq.elems) then
+            write(6,'(1x,A)') trim(vecString)
+            vecString = ''
+          endIf
+        endDo
+        write(iOut,'(A)') ''
+      endIf
+      if(iPrint.ge.printThresh) then
+        elems = min(3**iPrint,size(vector))
+        tmpVec = real(conjg(vector).ewp.vector)
+        write(6,'(1x,A)') 'Largest '//trim(num2char(elems))//' '//trim(titleString)//' populations'
+        vecString = ''
+        do i = 1, elems
+          vecString = trim(vecString)//' '//trim(num2char(maxLoc(abs(tmpVec)),'I3'))//' = '//&
+            trim(num2char(tmpVec%at(maxLoc(abs(tmpVec))),'F10.6'))
+          if(i.ne.elems) vecString = trim(vecString)//', '
+          call tmpVec%put(0.0,maxLoc(abs(tmpVec)))
+          if(i.eq.10.or.i.eq.elems) then
+            write(6,'(1x,A)') trim(vecString)
+            vecString = ''
+          endIf
+        endDo
+        write(iOut,'(A)') ''
+      endIf
+!
+      end subroutine print_coeffs_and_pops
 !    
 !
 !*    NOTES
