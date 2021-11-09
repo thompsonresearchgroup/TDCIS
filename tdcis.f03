@@ -16,35 +16,45 @@
 !*      using specified initial conditions.
 !
       implicit none
-      character(len=:),allocatable::command,fileName,help_path
       type(mqc_gaussian_unformatted_matrix_file)::fileInfo 
-      integer(kind=int64)::iOut=6,iPrint=1,iUnit,i,j,maxsteps,flag,stat_num
+      character(len=:),allocatable::command,fileName,help_path
+      character(len=256),dimension(:),allocatable::fileList
+      character(len=256)::vecString,root_string='',sub_string='',field_string='',&
+        pulseShape='rectangle',tcf_file='tcf',file_tmp,ci_string='orthogonal',gauss_exe='$g16root/g16/g16',&
+        mem='8GB',ncpu='2'
+      integer(kind=int64)::iOut=6,iPrint=1,iUnit,i,j,k,maxsteps,flag,stat_num,numFile=0,nullSize
+      integer(kind=int64),dimension(:),allocatable::isubs
       real(kind=real64)::delta_t=0.1,field_size=0.005,simTime=100.0,t0=0.0,sigma=0.5,omega=10.0,&
         beta=3.0
       real(kind=real64),allocatable::tcf_start
       complex(kind=real64)::imag=(0.0,1.0)
-      logical::UHF,file_exists
+      logical::UHF,file_exists,doDirect=.false.,found,doProcMem=.false.,keep_intermediate_files=.false.
       type(mqc_pscf_wavefunction)::wavefunction
       type(mqc_molecule_data)::moleculeInfo
-      type(mqc_twoERIs)::eris,mo_ERIs
-      type(mqc_scalar)::Vnn,final_energy
+      type(mqc_twoERIs),dimension(:),allocatable::eris
+      type(mqc_twoERIs)::mo_ERIs
+      type(mqc_scalar)::Vnn,final_energy,nIJ,pnIJ,hij,dij
       type(mqc_determinant)::determinants
       type(mqc_scf_integral)::mo_core_ham,density
+      type(mqc_scf_integral),dimension(2)::rho
       type(mqc_scf_integral),dimension(3)::dipole,dipoleMO
-      type(mqc_matrix)::CI_Hamiltonian,exp_CI_Hamiltonian,iden
-      type(mqc_matrix),dimension(3)::CI_Dipole,dipole_eigvecs
+      type(mqc_scf_integral),dimension(:),allocatable::mo_list
+      type(mqc_matrix)::CI_Hamiltonian,exp_CI_Hamiltonian,CI_Overlap,iden,sh2AtMp,shlTyp,nPrmSh,prmExp,&
+        conCoef,conCoTwo,shCoor
+      type(mqc_matrix),dimension(3)::CI_Dipole,dipole_eigvecs,Xmat,invXmat
       type(mqc_vector)::subs,nuclear_dipole,total_dipole,state_coeffs,td_ci_coeffs,field_vector,&
         td_field_vector,tcf_ci_epsilon,tcf
       type(mqc_vector),dimension(3)::dipole_eigvals
-      integer(kind=int64),dimension(:),allocatable::isubs
       type(mqc_vector),dimension(2)::nRoot
-      character(len=256)::vecString,root_string='',sub_string='',field_string='',&
-        pulseShape='rectangle',tcf_file='tcf',file_tmp
+      real(kind=real64),parameter::zero_thresh=1.00E-8
 !
 !*    USAGE
 !*      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--sub-levels substitutions] 
-!*        [--intial-state weight_vector] [--pulse-shape pulse] [--field-vector field_vector] 
-!*        [--field-size magnitude] [--time-step time_step] [--simulation-time time] [--help]
+!*        [--ci-type type_string] [--direct] [--gauss-exe gaussian_executable_string] 
+!*        [--do-proc-mem] [--mem mem] [--ncpu ncpu] [--keep-inters] [--intial-state weight_vector] 
+!*        [--pulse-shape pulse] [--field-vector field_vector] [--field-size magnitude] [--t0 time] 
+!*        [--omega frequency] [--sigma width] [--beta shift] [--tcf-start time] 
+!*        [--time-step time_step] [--simulation-time time] [--help]
 !*
 !*    OPTIONS
 !
@@ -86,6 +96,76 @@
           call mqc_get_command_argument(i+1,command)
           sub_string = command
           j = i+2
+        elseIf(command.eq.'--ci-type') then
+!
+!*      --ci-type type_string            Specifies the type of configuration interaction. Options
+!*                                       are:
+!*                                       1) orthogonal (default)
+!*                                          Perform orthogonal configuration interaction with 
+!*                                          determinant expansion specified by sub-levels option.
+!*                                          Only one matrix file should be specified in the input 
+!*                                          file is expected and additional inputs will result in 
+!*                                          an error.
+!*                                       2) nonorthogonal
+!*                                          Perform nonorthogonal configuration interaction with 
+!*                                          determinant expansion specified by matrix files 
+!*                                          listed in input file.
+!*                                       3) hybrid (not yet implemented)
+!*                                          Perform the orthogonal expansion specified by the sub-
+!*                                          levels option on each matrix file in the input file
+!*                                          which are generally nonorthogonal.
+!*
+          call mqc_get_command_argument(i+1,command)
+          ci_string = command
+          j = i+2
+        elseif(command.eq.'--direct') then
+ !
+ !*      --direct                         Avoid the use of 2ERIs in nonorthogonal code. Gaussian 
+ !*                                       is required if requested.
+ !*
+          doDirect=.true.
+          j = i + 1
+        elseIf(command.eq.'--gauss-exe') then
+!
+!*      --gauss-exe gaussian_executable  Path, executable and command line flags for Gaussian
+!*                                       executable used when running Gaussian jobs from within
+!*                                       the program.
+!*
+          call mqc_get_command_argument(i+1,command)
+          gauss_exe = command
+          j = i+2
+        elseIf(command.eq.'--do-proc-mem') then
+!
+!*      --do-proc-mem                    Request %mem and %nproc lines be added to the output
+!*                                       Gaussian input files if doing direct matrix elements.
+!*
+          doProcMem = .true.
+          j = i+1
+        elseIf(command.eq.'--mem') then
+!
+!*      --mem mem                        Amount of memory to be included in %mem output to
+!*                                       Gaussian input files. --do-proc-mem must be set.
+!*                                       Default is 8GB. Note input is not checked for validity.
+!*
+          call mqc_get_command_argument(i+1,command)
+          mem = command
+          j = i+2
+        elseIf(command.eq.'--nproc') then
+!
+!*      --ncpu ncpu                      Number of processors to be included in %nproc output
+!*                                       to Gaussian input files. --do-proc-mem must be set.
+!*                                       Default is 2. Note input is not checked for validity.
+!*
+          call mqc_get_command_argument(i+1,command)
+          ncpu = command
+          j = i+2
+        elseif(command.eq.'--keep-inters') then
+!
+!*      --keep-inters                    Do not delete intemediate files used in the calculation.
+!*                                       Default is to delete intermediate files.
+!*
+          keep_intermediate_files=.true.
+          j = i + 1
         elseIf(command.eq.'--initial-state') then
 !
 !*      --initial-state weight_vector    Initial state for simulation. For a pure state, the  
@@ -211,9 +291,36 @@
         endIf
       endDo
 !
-!     Get required data from matrix file.
+!     Parse input file and extract required data from matrix files.
 !
-      call fileInfo%load(filename)
+      if(.not.allocated(fileName)) call mqc_error('No input file provided',iOut)
+      open(newunit=iUnit,file=fileName,status='old',iostat=stat_num)
+      if(stat_num/=0) call mqc_error_a('Error opening file',iOut,'fileName',fileName)
+      read(unit=iUnit,fmt='(i20)',iostat=stat_num) numFile
+      if(stat_num/=0) call mqc_error('Error reading file number',iOut)
+      allocate(fileList(numFile))
+      do i = 1, numFile
+        read(unit=iUnit,fmt='(A)',iostat=stat_num) fileList(i)
+        if((stat_num<0).and.(i<=numFile)) call mqc_error('File EOF reached early',iOut)
+      endDo
+      close(unit=iUnit)
+!
+      if(ci_string.eq.'orthogonal'.and.numFile.ne.1) then
+        call mqc_error('Multiple matrix files input to requested orthogonal CI expansion.&
+          & Use sub-levels option to provide expansion',iOut)
+      elseIf(ci_string.eq.'orthogonal'.or.ci_string.eq.'nonorthogonal') then
+        allocate(mo_list(numFile))
+        do i = 1, numFile
+          call fileInfo%getESTObj('mo coefficients',est_integral=mo_list(i),filename=fileList(i))
+          if(iPrint.ge.4) call mo_list(i)%print(iOut,'MO coefficients from matrix file '//trim(num2char(i)))
+        endDo
+      elseIf(ci_string.eq.'hybrid') then
+        call mqc_error('Hybrid ci type is not yet implemented',iOut)
+      else
+        call mqc_error_a('Unrecognized CI type string provided',iOut,'ci_string',ci_string)
+      endIf
+!
+      call fileInfo%load(fileList(1))
       call fileInfo%getMolData(moleculeInfo)
       call fileInfo%getESTObj('wavefunction',wavefunction)
       if(iPrint.ge.4) call wavefunction%print(iOut,'all')
@@ -223,21 +330,59 @@
       if(iPrint.ge.4) call dipole(2)%print(6,'AO dipole y integrals')
       call fileInfo%getESTObj('dipole z',est_integral=dipole(3))
       if(iPrint.ge.4) call dipole(3)%print(6,'AO dipole z integrals')
-      call fileInfo%get2ERIs('regular',eris)
-      if(iPrint.ge.4) call eris%print(iOut,'AO 2ERIs')
 !
-      if(wavefunction%wf_type.eq.'U') then
-        UHF = .true.
-        if(iPrint.ge.3) write(iOut,'(1X,A)') 'Found UHF wavefunction'//NEW_LINE('A')
-      elseIf(wavefunction%wf_type.eq.'R') then
-        UHF = .False.
-        if(iPrint.ge.3) write(iOut,'(1X,A)') 'Found RHF wavefunction'//NEW_LINE('A')
-      else
-        call mqc_error_A('Unsupported wavefunction type in fullci',iOut, &
-          'Wavefunction%wf_type',wavefunction%wf_type)
-      endIf 
+      if(.not.doDirect) then
+        if(ci_string.eq.'orthogonal') then
+          allocate(eris(1))
+        else
+          allocate(eris(3))
+        endIf
+        call fileInfo%get2ERIs('regular',eris(1),foundERI=found)
+        if(found.and.ci_string.ne.'orthogonal') then
+          eris(2) = eris(1)
+          eris(3) = eris(1)
+          call mqc_twoeris_transform(eris(1),'raffenetti1')
+          call mqc_twoeris_transform(eris(2),'raffenetti2')
+          call mqc_twoeris_transform(eris(3),'raffenetti3')
+        elseIf(ci_string.ne.'orthogonal') then
+          call fileInfo%get2ERIs('raffenetti1',eris(1),foundERI=found)
+          if(found) call fileInfo%get2ERIs('raffenetti2',eris(2),foundERI=found)
+          if(found) call fileInfo%get2ERIs('raffenetti3',eris(3),foundERI=found)
+        endIf
+        if(.not.found) call mqc_error_l('Integrals were not found on matrix file',6, &
+          'found',found)
+        if(iPrint.ge.4) then
+          do i = 1, size(eris) 
+            call eris(i)%print(iOut,'AO 2ERIs set '//trim(num2char(i)))
+          endDo
+        endIf
+      endIf
 !
-      if (wavefunction%wf_complex) call mqc_error('Complex wavefunctions unsupported in fullci')
+      if(ci_string.ne.'nonorthogonal') then
+        if(wavefunction%wf_type.eq.'U') then
+          UHF = .true.
+          if(iPrint.ge.3) write(iOut,'(1X,A)') 'Found UHF wavefunction'//NEW_LINE('A')
+        elseIf(wavefunction%wf_type.eq.'R') then
+          UHF = .False.
+          if(iPrint.ge.3) write(iOut,'(1X,A)') 'Found RHF wavefunction'//NEW_LINE('A')
+        else
+          call mqc_error_A('Unsupported wavefunction type',iOut, &
+            'Wavefunction%wf_type',wavefunction%wf_type)
+        endIf 
+        if (wavefunction%wf_complex) call mqc_error('Complex wavefunctions unsupported')
+      endIf
+!
+      if(doDirect) then
+        call fileInfo%getArray('SHELL TO ATOM MAP',sh2AtMp)
+        call fileInfo%getArray('SHELL TYPES',shlTyp)
+        call fileInfo%getArray('NUMBER OF PRIMITIVES PER SHELL',nPrmSh)
+        call fileInfo%getArray('PRIMITIVE EXPONENTS',prmExp)
+        call fileInfo%getArray('CONTRACTION COEFFICIENTS',conCoef)
+        call fileInfo%getArray('P(S=P) CONTRACTION COEFFICIENTS',conCoTwo)
+        call fileInfo%getArray('COORDINATES OF EACH SHELL',shCoor)
+        if(ci_string.eq.'orthogonal') call mqc_error('Direct matrix elements not possible with orthogonal CI')
+      endIf
+!
 !
 !     Compute the nuclear-nuclear repulsion energy.
 !
@@ -245,67 +390,119 @@
       Vnn = mqc_get_nuclear_repulsion(moleculeInfo)
       call Vnn%print(iOut,'Nuclear Repulsion Energy (au)',Blank_At_Bottom=.true.) 
 !
-!     Generate Slater determinants wavefunction expansion      
+!     Generate Slater determinants wavefunction expansion if orthogonal expansion requested. 
 !
-      call substitution_builder(sub_string,subs)
-      if(iPrint.ge.1) then
-        write(iOut,'(1X,A)') 'Building Determinant Strings'
-        call subs%print(6,'Permitted substitution levels',Blank_At_Bottom=.true.)
+      if(ci_string.ne.'nonorthogonal') then
+        call substitution_builder(sub_string,subs)
+        if(iPrint.ge.1) then
+          write(iOut,'(1X,A)') 'Building Determinant Strings'
+          call subs%print(6,'Permitted substitution levels',Blank_At_Bottom=.true.)
+        endIf
+        isubs = [(i, i=1,int(maxval(subs)))]
+        call trci_dets_string(iOut,iPrint,wavefunction%nBasis,wavefunction%nAlpha, &
+          Wavefunction%nBeta,isubs,determinants)
       endIf
-      isubs = [(i, i=1,int(maxval(subs)))]
-      call trci_dets_string(iOut,iPrint,wavefunction%nBasis,wavefunction%nAlpha, &
-        Wavefunction%nBeta,isubs,determinants)
 !
-!     Transform one and two-electron integrals to MO basis
+!     Transform one and two-electron integrals to MO basis (only if performing orthogonal CI).
 !
-      if(iPrint.ge.1) write(iOut,'(1X,A)') 'Transforming MO integrals'//NEW_LINE('A')
-      mo_core_ham = matmul(transpose(wavefunction%MO_Coefficients),matmul(wavefunction%core_Hamiltonian, &
-          Wavefunction%MO_Coefficients))
-      if(IPrint.ge.4) call mo_core_ham%print(iOut,'MO Basis Core Hamiltonian') 
-      call twoERI_trans(iOut,iPrint,wavefunction%MO_Coefficients,ERIs,mo_ERIs)
+      if(ci_string.ne.'nonorthogonal') then
+        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Transforming MO integrals'//NEW_LINE('A')
+        mo_core_ham = matmul(transpose(wavefunction%MO_Coefficients),matmul(wavefunction%core_Hamiltonian, &
+            Wavefunction%MO_Coefficients))
+        if(IPrint.ge.4) call mo_core_ham%print(iOut,'MO Basis Core Hamiltonian') 
+        call twoERI_trans(iOut,iPrint,wavefunction%MO_Coefficients,ERIs(1),mo_ERIs)
+      endIf
 !
-!     Generate field-free Hamiltonian matrix
-!
-      if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building CI Hamiltonian'
-      call subs%unshift(0)
-      isubs = subs
-      call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis,determinants, &
-        mo_core_ham,mo_ERIs,UHF,CI_Hamiltonian,isubs)
-      if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian')
-!
-!     Diagonalize Hamiltonian
-!
-      if(iPrint.ge.1) write(iOut,'(1X,A)') 'Diagonalizing CI Hamiltonian'//NEW_LINE('A')
-      call CI_Hamiltonian%diag(wavefunction%pscf_energies,wavefunction%pscf_amplitudes)
-      if(iPrint.ge.4) call wavefunction%pscf_amplitudes%print(iOut,'CI Eigenvectors')
-      if(iPrint.ge.3) call wavefunction%pscf_energies%print(iOut,'CI Eigenvalues')
-!
-!     Transform dipole integrals to the length form in the CI basis.
+!     Compute nuclear dipole moment.
 !
       nuclear_dipole = matmul(transpose(moleculeInfo%Nuclear_Charges),&
         transpose(moleculeInfo%Cartesian_Coordinates))
       if(iPrint.ge.1) call nuclear_dipole%print(6,'Nuclear dipole',Blank_At_Bottom=.true.)
       call total_dipole%init(3)
-
-      do i = 1, 3
-        dipoleMO(i) = matmul(dagger(wavefunction%MO_Coefficients),&
-          matmul(dipole(i),Wavefunction%MO_Coefficients))
-        if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)))
+!
+!     Generate field-free Hamiltonian matrix and dipole matrices (in length form) in CI basis.
+!
+      if(ci_string.eq.'orthogonal') then
+        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
+        call subs%unshift(0)
+        isubs = subs
         call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis,determinants, &
-          dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i),subs=isubs)
-        if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)))
-        call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
-        CI_Dipole(i) = iden - CI_Dipole(i)
-        if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//trim(num2char(i)))
-      endDo
+          mo_core_ham,mo_ERIs,UHF,CI_Hamiltonian,isubs)
+        if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian')
+        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI dipole matrices'
+        do i = 1, 3
+          dipoleMO(i) = matmul(dagger(wavefunction%MO_Coefficients),&
+            matmul(dipole(i),Wavefunction%MO_Coefficients))
+          if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)))
+          call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis,determinants, &
+            dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i),subs=isubs)
+          if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)))
+          call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
+          CI_Dipole(i) = iden - CI_Dipole(i)
+          if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//trim(num2char(i)))
+        endDo
+      elseIf(ci_string.eq.'nonorthogonal') then
+        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building nonorthogonal CI Hamiltonian, CI overlap and CI dipole matrices'
+!       loop over pairs of Slater determinants and build transition density matrices. Get the H, N and Mu CI matrices
+        call CI_Hamiltonian%init(numFile,numFile,storage='StorHerm') 
+        call CI_Overlap%init(numFile,numFile,storage='StorHerm') 
+        do i = 1, 3
+          call CI_Dipole(i)%init(numFile,numFile,storage='StorHerm') 
+        endDo
+        do i = 1, numFile
+          do j = 1, i
+            call get_rhos(rho,nIJ,pnIJ,nullSize,mo_list(i),mo_list(j),wavefunction%overlap_matrix,wavefunction%nBasis,&
+              wavefunction%nAlpha,wavefunction%nBeta)
+            call CI_Overlap%put(nIJ,i,j,'hermitian')
+            hij = get_hij(pnij,nullSize,rho,wavefunction%core_Hamiltonian,eris,doDirect,fileInfo,fileName,&
+              symIndexHash(i,j),sh2AtMp,shlTyp,nPrmSh,prmExp,conCoef,conCoTwo,shCoor,gauss_exe,doProcMem,&
+              mem,ncpu,keep_intermediate_files)
+            call CI_Hamiltonian%put(hIJ,i,j,'hermitian')
+            do k = 1, 3
+              dij = get_dij(pnij,rho(1),dipole(k))
+              call CI_Dipole(k)%put(dij,i,j,'hermitian')
+            endDo
+          endDo
+        endDo
+        if(iPrint.ge.4) call CI_Overlap%print(6,'CI Overlap')
+        if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian')
+        do i = 1, 3
+          call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
+          CI_Dipole(i) = iden - CI_Dipole(i)
+          if(iPrint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//trim(num2char(i)))
+        endDo
+      endIf
+!
+!     Diagonalize Hamiltonian
+!
+      if(iPrint.ge.1) write(iOut,'(1X,A)') 'Diagonalizing CI Hamiltonian'//NEW_LINE('A')
+      if(ci_string.eq.'orthogonal') then
+        call CI_Hamiltonian%diag(wavefunction%pscf_energies,wavefunction%pscf_amplitudes)
+      elseIf(ci_string.eq.'nonorthogonal') then
+        call CI_Hamiltonian%eigensys(CI_Overlap,wavefunction%pscf_energies,wavefunction%pscf_amplitudes)
+      endIf
+
+      if(iPrint.ge.4) call wavefunction%pscf_amplitudes%print(iOut,'CI Eigenvectors')
+      if(iPrint.ge.3) call wavefunction%pscf_energies%print(iOut,'CI Eigenvalues')
 !
 !     Diagonalize the dipole moment matrix to get transformation matrix U
 !
       do i = 1, 3
         if(iPrint.eq.1) write(iOut,'(1X,A)') 'Diagonalizing SD dipole axis '//trim(num2char(i))//NEW_LINE('A')
-        call CI_Dipole(i)%diag(dipole_eigvals(i),dipole_eigvecs(i))
-        if(iPrint.ge.4) call dipole_eigvecs(i)%print(iOut,'CI Dipole Eigenvectors axis'//trim(num2char(i)))
+        if (ci_string.eq.'orthogonal') then
+          call CI_Dipole(i)%diag(dipole_eigvals(i),dipole_eigvecs(i))
+        elseIf(ci_string.eq.'nonorthogonal') then
+          call CI_Dipole(i)%eigensys(CI_Overlap,dipole_eigvals(i),dipole_eigvecs(i))
+        endIf
+        if(iPrint.ge.4) call dipole_eigvecs(i)%print(iOut,'CI Dipole Eigenvectors axis '//trim(num2char(i)))
         if(iprint.ge.3) call dipole_eigvals(i)%print(iOut,'CI Dipole Eigenvalues axis '//trim(num2char(i)))
+        if (ci_string.eq.'orthogonal') then
+          Xmat(i) = matmul(dagger(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
+          invXmat(i) = dagger(Xmat(i))
+        elseIf(ci_string.eq.'nonorthogonal') then
+          Xmat(i) = matmul(mqc_matrix_inverse(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
+          invXmat(i) = mqc_matrix_inverse(Xmat(i))
+        endIf
       endDo
 !
 !     Build the electric field pulse vector
@@ -366,9 +563,9 @@
 
         state_coeffs = exp((-1)*imag*delta_t*wavefunction%pscf_energies).ewp.state_coeffs
         do j = 3, 1, -1
-          state_coeffs = matmul(matmul(dagger(dipole_eigvecs(j)),wavefunction%pscf_amplitudes),state_coeffs)
+          state_coeffs = matmul(Xmat(j),state_coeffs)
           state_coeffs = exp(imag*delta_t*td_field_vector%at(j)*dipole_eigvals(j)).ewp.state_coeffs
-          state_coeffs = matmul(matmul(dagger(wavefunction%pscf_amplitudes),dipole_eigvecs(j)),state_coeffs)
+          state_coeffs = matmul(invXmat(j),state_coeffs)
         endDo
         call print_coeffs_and_pops(iOut,iPrint,1,state_coeffs,'TD State')
 
@@ -799,6 +996,453 @@
 !
       end subroutine print_coeffs_and_pops
 !    
+!
+!     PROCEDURE get_rhos
+!     
+!     get_rhos is a subroutine that returns the atomic orbital transition density 
+!     matrices of two (nonorthogonal) Slater determinants, as well as the dimension
+!     of the overlap null space, the overlap and psuedo-overlap matrix elements. The
+!     sign of nullSize gives the multiple of matrix elements accounting for antisymmetry
+!     due to permutation of orbitals in the SVD.
+!
+      subroutine get_rhos(rho,nIJ,pnIJ,nullSize,mo_I,mo_J,overlap,nBasis,nAlpha,nBeta)
+
+      implicit none
+
+!     input/output variables
+      type(mqc_scf_integral),dimension(2),intent(inOut)::rho
+      type(mqc_scalar),intent(inOut)::nIJ,pnIJ
+      integer(kind=int64)::nullSize
+      type(mqc_scf_integral),intent(in)::mo_I,mo_J,overlap
+      type(mqc_scalar),intent(in)::nBasis,nAlpha,nBeta
+
+!     subroutine variables
+      type(mqc_matrix)::mo_I_occ,mo_J_occ,mIJ,uMat,vMat,tmoI,tmoJ,rhoMat,tMat1,tMat2,&
+        tMat3,tMat4
+      type(mqc_vector)::sigmaMat
+      logical::orthflag
+      integer(kind=int64)::i
+
+!
+      mo_I_occ = mo_I%orbitals('occupied',[int(nAlpha)],[int(nBeta)]) 
+      mo_J_occ = mo_J%orbitals('occupied',[int(nAlpha)],[int(nBeta)]) 
+      
+      mIJ = matmul(matmul(dagger(mo_I_occ),overlap%getBlock('full')),mo_J_occ)
+      nIJ = mIJ%det()
+
+      orthflag = .false.
+      if((nIJ%abs()).lt.zero_thresh) then
+        call mIJ%svd(EVals=sigmaMat,EUVecs=uMat,EVVecs=vMat)
+        if(minval(abs(sigmaMat)).lt.zero_thresh) orthflag = .true.
+      endIf
+
+      if(orthflag) then
+        pnIJ = 1.0
+        nullSize = 0
+        do i = 1,size(sigmaMat)
+          if(sigmaMat%at(i).gt.zero_thresh) then
+            pnIJ = pnIJ*sigmaMat%at(i)
+          else
+            nullSize = nullSize + 1
+          endIf
+        endDo
+        nullSize = sign(1.0,real(uMat%det()))*sign(1.0,real(vMat%det()))*nullSize
+      else
+        pnIJ = nIJ
+        nullSize = 0
+      endIf
+
+      if(orthflag) then
+        call signCheckSVD(uMat,sigmaMat,vMat,int(nAlpha+nBeta)) 
+        tmoI = matmul(dagger(uMat),dagger(mo_I_occ))
+        tmoJ = matmul(mo_J_occ,dagger(vMat))
+        call rhoMat%init(int(nBasis)*2,int(nBasis)*2)
+        call pairDensity(sigmaMat,tmoI,tmoJ,rhoMat,int(nBasis),1)
+      else
+        rhoMat = matmul(matmul(mo_J_occ,MIJ%inv()),dagger(mo_I_occ))
+      endif
+
+      tMat1 = rhoMat%mat([1,int(nBasis)],[1,int(nBasis)])
+      tMat2 = rhoMat%mat([int(nBasis)+1,int(nBasis)*2],[int(nBasis)+1,int(nBasis)*2])
+      tMat3 = rhoMat%mat([int(nBasis)+1,int(nBasis)*2],[1,int(nBasis)])
+      tMat4 = rhoMat%mat([1,int(nBasis)],[int(nBasis)+1,int(nBasis)*2])
+
+      if(MQC_Matrix_Norm((tMat1-tMat2)).lt.1.0e-14.and.tMat3%norm().lt.1.0e-14.and. &
+        tMat4%norm().lt.1.0e-14) then
+        call mqc_integral_allocate(rho(1),'','space',tMat1)
+      elseIf(tMat3%norm().lt.1.0e-14.and.tMat4%norm().lt.1.0e-14) then
+        call mqc_integral_allocate(rho(1),'','spin',tMat1,tMat2)
+      else
+        call mqc_integral_allocate(rho(1),'','general',tMat1,tMat2,tMat3,tMat4)
+      endIf
+
+      if(orthflag) then
+        call rhoMat%init(int(nbasis)*2,int(nbasis)*2)
+        call pairDensity(sigmaMat,tmoI,tmoJ,rhoMat,int(nBasis),2)
+        tmat1 = rhoMat%mat([1,int(nBasis)],[1,int(nBasis)])
+        tmat2 = rhoMat%mat([int(nBasis)+1,int(nBasis)*2],[int(nBasis+1),int(nBasis)*2])
+        tmat3 = rhoMat%mat([int(nBasis)+1,int(nBasis)*2],[1,int(nBasis)])
+        tmat4 = rhoMat%mat([1,int(nBasis)],[int(nBasis)+1,int(nBasis)*2])
+      endIf
+      if(MQC_Matrix_Norm((tMat1-tMat2)).lt.1.0e-14.and.tMat3%norm().lt.1.0e-14.and. &
+        tMat4%norm().lt.1.0e-14) then
+        call mqc_integral_allocate(rho(2),'','space',tMat1)
+      elseIf(tMat3%norm().lt.1.0e-14.and.tMat4%norm().lt.1.0e-14) then
+        call mqc_integral_allocate(rho(2),'','spin',tMat1,tMat2)
+      else
+        call mqc_integral_allocate(rho(2),'','general',tMat1,tMat2,tMat4,tMat3)
+      endIf
+!
+      end subroutine get_rhos
+!
+!
+!     PROCEDURE signCheckSVD
+!     
+!     signCheckSVD is a subroutine that returns the phases of left and right
+!     singular vectors such that they are located in the upper left quadrant of
+!     the argand diagram. Optional inputs offset and dimen provide the ability
+!     to update the phases of a subset of singular vectors.
+!    
+      subroutine signCheckSVD(U,S,Vdag,dimen,offset)
+      
+      implicit none
+      type(mqc_matrix)::U
+      type(mqc_matrix),optional::Vdag
+      type(mqc_vector),optional::S
+      type(mqc_scalar)::zero,det1,theta1,exp1
+      integer(kind=int64)::dimen,start
+      integer(kind=int64),optional::offset
+      
+      zero = 1.0e-13
+      
+      if(present(offset)) then
+        start = offset
+      else
+        start = 1
+      endIf
+      
+      do k = start, start+dimen-1
+        det1 = U%at(mqc_vector_maxloc(abs(U%vat([0],[k]))),k)
+        if(abs(real(det1)).le.zero.and.abs(aimag(det1)).gt.zero) then
+          theta1 = (-1)*asin(aimag(det1)/(sqrt(real(det1)**2+aimag(det1)**2)))
+        elseIf(abs(aimag(det1)).le.zero.and.abs(real(det1)).gt.zero) then
+          theta1 = (-1)*acos(real(det1)/(sqrt(real(det1)**2+aimag(det1)**2)))
+        elseIf(abs(real(det1)).gt.zero.and.abs(aimag(det1)).gt.zero) then
+          theta1 = (-1)*atan2(det1)
+        else
+          theta1 = zero
+        endIf
+        exp1 = cmplx(cos(theta1),sin(theta1))
+        if(abs(aimag(exp1)).le.zero) exp1 = real(exp1)
+        call U%vput(exp1*U%vat([0],[k]),[0],[k])
+        if(present(S).and.present(Vdag)) then
+          if(S%at(k).gt.zero_thresh) then
+            call Vdag%vput(dagger(exp1*dagger(Vdag%vat([k],[0]))),[k],[0])
+          else
+            det1 = conjg(Vdag%at(k,mqc_vector_maxloc(abs(Vdag%vat([k],[0])))))
+            if(abs(real(det1)).le.zero.and.abs(aimag(det1)).gt.zero) then
+              theta1 = (-1)*asin(aimag(det1)/(sqrt(real(det1)**2+aimag(det1)**2)))
+            elseIf(abs(aimag(det1)).le.zero.and.abs(real(det1)).gt.zero) then
+              theta1 = (-1)*acos(real(det1)/(sqrt(real(det1)**2+aimag(det1)**2)))
+            elseIf(abs(real(det1)).gt.zero.and.abs(aimag(det1)).gt.zero) then
+              theta1 = (-1)*atan2(det1)
+            else
+              theta1 = zero
+            endIf
+            exp1 = cmplx(cos(theta1),sin(theta1))
+            if(abs(aimag(exp1)).le.zero) exp1 = real(exp1)
+            call Vdag%vput(dagger(exp1*dagger(Vdag%vat([k],[0]))),[k],[0])
+          endIf
+        endIf
+      endDo
+      
+      end subroutine signCheckSVD
+!
+!
+!     PROCEDURE pairDens
+!
+!     pairDensity is a subroutine to calculate transition density matrix from MOs
+!     given in the diagonal overlap basis between bra and ket orbitals, i.e. 
+!     from transformed orbitals MOs:
+!     C_J' = C_J.V
+!     C_I' = U*.C_I*
+!     Incoming rho must be zeroed.
+!
+      subroutine pairDensity(Svals,tMOI,tMOJ,total_rho,numBasis,DenNum)
+
+      implicit none
+      type(mqc_scalar)::hold
+      type(mqc_vector)::Svals
+      type(mqc_matrix)::tMOI,tMOJ,rho_pair,total_rho,i_pair,j_pair,t_mat
+      real(kind=real64)::temp,det_m = 1.0
+      integer::i,nvals,numBasis,nZero,DenNum,Flag
+   
+      nvals = Svals%size()
+      nZero = 0
+      Flag = 0
+      do i = 1, nvals
+        if(MQC_Scalar_Get_Intrinsic_Real(Svals%at(i)).lt.zero_thresh) nZero = nZero + 1
+      endDo
+   
+      if(nZero.gt.2) return
+   
+      do i=1, nvals
+        temp = Svals%at(i)
+   
+        i_pair = tMOI%mat([i,i],[1,numBasis*2])
+        j_pair = tMOJ%mat([1,numBasis*2],[i,i])
+   
+        if(nZero.eq.0) then
+          if(temp.gt.zero_thresh) then
+            cycle
+          else
+            rho_pair = matmul(j_pair,i_pair)
+          end if
+        elseIf(nZero.eq.1) then
+          if(DenNum.eq.1) then
+            if(temp.lt.zero_thresh) then
+              cycle
+            else
+              rho_pair = matmul(j_pair,i_pair)/Svals%at(i)
+            end if
+          elseIf(DenNum.eq.2) then
+            if(temp.ge.zero_thresh) then
+              cycle
+            else
+              rho_pair = matmul(j_pair,i_pair)
+            end if
+          else
+            call mqc_error_i('Density number not recognised',6,'DenNum',DenNum)
+          endIf
+        elseIf(nZero.eq.2) then
+          if(DenNum.eq.1) then
+            if(temp.ge.zero_thresh) then
+              cycle
+            elseIf(flag.eq.0) then
+              rho_pair = matmul(j_pair,i_pair)
+              flag = 1
+            elseIf(flag.eq.1) then
+              cycle
+            end if
+          elseIf(DenNum.eq.2) then
+            if(temp.ge.zero_thresh) then
+              cycle
+            elseIf(flag.eq.0) then
+              flag = 1
+              cycle
+            elseIf(flag.eq.1) then
+              rho_pair = matmul(j_pair,i_pair)
+            end if
+          else
+            call mqc_error_i('Density number not recognised',6,'DenNum',DenNum)
+          endIf
+        endIf
+        total_rho = total_rho + rho_pair
+      end do
+   
+      end subroutine pairDensity
+!
+!
+!     PROCEDURE get_hij
+!
+!     get_hij is a function that returns the value of a Hamiltonian matrix element between
+!     two (nonorthogonal) determinants, given the transition density matrices and required
+!     integrals.
+!
+      function get_hij(pnij,nullSize,rho,coreHam,eris,doDirectIn,fileInfo,fileName,&
+          loopNumber,sh2AtMp,shlTyp,nPrmSh,prmExp,conCoef,conCoTwo,shCoor,gauss_exe,doProcMem,&
+          mem,ncpu,keep_intermediate_files) result(hIJ)
+
+      implicit none
+      type(mqc_scalar),intent(in)::pnij
+      integer(kind=int64),intent(in)::nullSize
+      type(mqc_scf_integral),dimension(2),intent(in)::rho
+      type(mqc_scf_integral),intent(in)::coreHam
+      type(mqc_twoeris),dimension(:),allocatable,intent(in)::eris
+      logical,optional,intent(in)::doDirectIn
+      type(mqc_gaussian_unformatted_matrix_file),optional,intent(inOut)::fileInfo
+      character(len=*),optional,intent(in)::fileName
+      integer(kind=int64),optional,intent(in)::loopNumber
+      type(mqc_matrix),optional,intent(in)::sh2AtMp,shlTyp,nPrmSh,prmExp,conCoef,conCoTwo,shCoor
+      character(len=*),optional,intent(in)::gauss_exe,mem,ncpu
+      logical,optional,intent(in)::doProcMem,keep_intermediate_files
+      type(mqc_scalar)::hIJ
+
+      logical::doDirect
+      type(mqc_scf_integral)::fMat
+      type(mqc_scalar)::core_con,gmat_con
+      real(kind=real64)::zero=0.0,half=0.5
+
+      if(present(doDirectIn)) then
+        doDirect = doDirectIn
+        if(.not.present(fileInfo).or.&
+          .not.present(fileName).or.&
+          .not.present(loopNumber).or.&
+          .not.present(sh2AtMp).or.&
+          .not.present(shlTyp).or.&
+          .not.present(nPrmSh).or.&
+          .not.present(prmExp).or.&
+          .not.present(conCoef).or.&
+          .not.present(conCoTwo).or.&
+          .not.present(shCoor).or.&
+          .not.present(gauss_exe).or.&
+          .not.present(mem).or.&
+          .not.present(ncpu).or.&
+          .not.present(doProcMem).or.&
+          .not.present(keep_intermediate_files)) &
+          call mqc_error('Missing data required for direct Fock matrix computation')
+      else
+        doDirect = .false.
+      endIf
+
+      if(doDirect) then
+        fMat = do_external_fock_build(fileInfo,fileName,loopNumber,rho(1),sh2AtMp,shlTyp,nPrmSh,prmExp,&
+          conCoef,conCoTwo,shCoor,gauss_exe,doProcMem,mem,ncpu,keep_intermediate_files)
+      else
+        fMat = mqc_eri_integral_contraction(eris,rho(1))
+        fMat = coreHam + fMat
+      endIf
+      core_con = mqc_scf_integral_contraction(rho(2),coreham)
+      gmat_con = mqc_scf_integral_contraction(rho(2),fMat-coreHam)
+
+      if(abs(nullSize).gt.0) then
+        if(abs(nullSize).eq.1) then
+          hij = pnij*(core_con+gmat_con)
+        elseIf(abs(nullSize).eq.2) then
+          hij = pnij*(gmat_con)
+        elseIf(abs(nullSize).gt.2) then
+          hij = zero
+        else
+          call MQC_error_I('Number of zero-overlap orbital pairs is zero, but then &
+            &NIJ should not be zero',6,'nullSize',nullSize)
+        endIf
+        ! take care of antisymmetry
+        hij = sign(1.0,nullSize)*hij
+      else
+        hij = pnij*(core_con+(half*gmat_con))
+      endif
+
+      end function get_hij
+!
+!
+!     PROCEDURE get_dij
+!
+!     get_dij is a function that returns the value of a one-electron operator matrix element
+!     between two (nonorthogonal) determinants, given the transition density matrices and 
+!     required integrals.
+!
+      function get_dij(pnij,rho,oneElInt) result(dIJ)
+
+      implicit none
+      type(mqc_scalar),intent(in)::pnij
+      type(mqc_scf_integral),intent(in)::rho
+      type(mqc_scf_integral),intent(in)::oneElInt
+      type(mqc_scalar)::dIJ
+
+      dIJ = pnij*contraction(rho,oneElInt)
+
+      end function get_dij
+!
+!
+!     PROCEDURE do_external_fock_build
+!
+!     do_external_fock_build is a function that returns the Fock matrix between two 
+!     (nonorthogonal) determinants, given a transition density matrix. The code requires
+!     a modified version of Gaussian 16.
+!
+      function do_external_fock_build(temp_file,fileName,loopNumber,rho,sh2AtMp,shlTyp,nPrmSh,prmExp,&
+          conCoef,conCoTwo,shCoor,gauss_exe,doProcMem,mem,ncpu,keep_intermediate_files) result(fMat)
+
+      implicit none
+      type(mqc_gaussian_unformatted_matrix_file),intent(inOut)::temp_file
+      character(len=*),intent(in)::fileName
+      integer(kind=int64),intent(in)::loopNumber
+      type(mqc_scf_integral),intent(in)::rho
+      type(mqc_matrix),intent(in)::sh2AtMp,shlTyp,nPrmSh,prmExp,conCoef,conCoTwo,shCoor
+      character(len=*),intent(in)::gauss_exe,mem,ncpu
+      logical,intent(in)::doProcMem,keep_intermediate_files
+      type(mqc_scf_integral)::fMat
+      
+      character(len=256)::newFileName
+
+      newFileName = trim(fileName)//'-matrix-'
+      call build_string_add_int(loopNumber,newFileName,20)
+      newFileName = trim(newFileName) // '.mat'
+
+      temp_file%icgu = 221
+      call temp_file%create(newFileName)
+      call temp_file%writeArray('SHELL TO ATOM MAP',sh2AtMp)
+      call temp_file%writeArray('SHELL TYPES',shlTyp)
+      call temp_file%writeArray('NUMBER OF PRIMITIVES PER SHELL',nPrmSh)
+      call temp_file%writeArray('PRIMITIVE EXPONENTS',prmExp)
+      call temp_file%writeArray('CONTRACTION COEFFICIENTS',conCoef)
+      call temp_file%writeArray('P(S=P) CONTRACTION COEFFICIENTS',conCoTwo)
+      call temp_file%writeArray('COORDINATES OF EACH SHELL',shCoor)
+      call temp_file%writeESTObj('density',est_integral=rho,override='general')
+      call Close_MatF(temp_file%UnitNumber)
+
+      call write_gau_fock_file(newFileName,mqc_matrix_test_symmetric(rho%getblock(),'hermitian'), &
+        mqc_matrix_test_symmetric(rho%getblock(),'antihermitian'),doProcMem,mem,ncpu)
+      write(6,'(A,A)') 'Processing input file ',newFileName
+      call execute_command_line(gauss_exe//(trim(newFileName(1:(len(trim(newFileName))-4)))//'.com'))
+
+      call temp_file%load(trim(newFileName(1:(len(trim(newFileName))-4)))//'-out.mat')
+      call temp_file%getESTObj('fock',est_integral=Fmat)
+
+      if(.not.keep_intermediate_files) then
+        call execute_command_line('rm '//(trim(newFileName(1:(len(trim(newFileName))-4)))//'.com'))
+        call execute_command_line('rm '//(trim(newFileName(1:(len(trim(newFileName))-4)))//'.log'))
+        call execute_command_line('rm '//(trim(newFileName(1:(len(trim(newFileName))-4)))//'-out.mat'))
+        call execute_command_line('rm '//newFileName)
+      endIf
+
+      end function do_external_fock_build
+!
+!
+!     PROCEDURE write_gau_fock_file
+!
+      subroutine write_gau_fock_file(matrixFile,diag,ahrm,doProcMem,mem,ncpu)
+
+      implicit none
+      character(len=80)::matrixFile,tempFile,outFile,mem,ncpu
+      logical::diag,ahrm,doProcMem
+      integer::io_stat_number,unitno
+    
+      tempFile = matrixFile(1:(len(trim(matrixFile))-4))
+      tempFile = trim(tempFile) // '.com'
+      outFile = matrixFile(1:(len(trim(matrixFile))-4))
+      outFile = trim(outFile) // '-out.mat'
+    
+      open(newunit=unitno,file=tempFile,status='replace',iostat=io_stat_number)
+      write(unitno,"(A11,A80)")'%oldmatrix=',adjustl(matrixFile)
+      if(doProcMem) write(unitno,"(A13,A6)")'%nprocshared=',adjustl(ncpu)
+      if(doProcMem) write(unitno,"(A5,A6)")'%mem=',adjustl(mem)
+      write(unitno,"(A9)")'#P nonstd'
+!
+!     nonstandard route section; uses iop 4/5=19,4/200=4
+!
+      write(unitno,*) '1/29=7,38=1,172=1/1;'
+      write(unitno,*) '2/12=2,15=1,40=1/2;'
+      write(unitno,*) '3/5=7,6=2,11=9,14=-4,25=1,30=1,67=1,116=7/1,2,3;'
+      if(diag) then
+        write(unitno,*) '4/5=19,6=2,200=5,33=2/1;'
+        write(unitno,*) '6/33=3,200=1/20;'
+      elseIf(ahrm) then
+        write(unitno,*) '4/5=19,6=2,200=6,33=2/1;'
+        write(unitno,*) '6/33=3,200=11/20;'
+      else
+        write(unitno,*) '4/5=19,6=2,200=4,33=2/1;'
+        write(unitno,*) '6/33=3,200=11/20;'
+      endIf
+      write(unitno,*) '99/5=1,6=100000,9=1/99;'
+      write(unitno,*) ''
+      write(unitno,"(A)") outFile
+      write(unitno,*) ''
+    
+      close(unit=unitno)
+    
+      end subroutine write_gau_fock_file
+!
 !
 !*    NOTES
 !*      Compilation of this program requires the MQC library (https://github.com/MQCPack/mqcPack)

@@ -7,7 +7,11 @@ SYNOPSIS
       using specified initial conditions.
 USAGE
       TDCIS [-f <matrix_file>] [--print-level <print_level>] [--sub-levels substitutions] 
-        [--intial-cond weight_vector] [--time-step time_step] [--steps steps] [--help]
+        [--ci-type type_string] [--direct] [--gauss-exe gaussian_executable_string] 
+        [--do-proc-mem] [--mem mem] [--ncpu ncpu] [--keep-inters] [--intial-state weight_vector] 
+        [--pulse-shape pulse] [--field-vector field_vector] [--field-size magnitude] [--t0 time] 
+        [--omega frequency] [--sigma width] [--beta shift] [--tcf-start time] 
+        [--time-step time_step] [--simulation-time time] [--help]
 OPTIONS
       -f matrix_file                   Input matrix file with initial set of molecular orbitals.
 
@@ -16,19 +20,98 @@ OPTIONS
 
       --sub-levels substitutions       Substitution levels permitted in truncated CI calculation. 
 
-      --initial-cond weight_vector     Initial state for simulation. For a pure state, the  
+                                       Example: [1,2] specifies single and double substitutions.
+
+      --ci-type type_string            Specifies the type of configuration interaction. Options
+                                       are:
+                                       1) orthogonal (default)
+                                          Perform orthogonal configuration interaction with 
+                                          determinant expansion specified by sub-levels option.
+                                          Only one matrix file should be specified in the input 
+                                          file is expected and additional inputs will result in 
+                                          an error.
+                                       2) nonorthogonal
+                                          Perform nonorthogonal configuration interaction with 
+                                          determinant expansion specified by matrix files 
+                                          listed in input file.
+                                       3) hybrid (not yet implemented)
+                                          Perform the orthogonal expansion specified by the sub-
+                                          levels option on each matrix file in the input file
+                                          which are generally nonorthogonal.
+
+      --direct                         Avoid the use of 2ERIs in nonorthogonal code. Gaussian 
+                                       is required if requested.
+
+      --gauss-exe gaussian_executable  Path, executable and command line flags for Gaussian
+                                       executable used when running Gaussian jobs from within
+                                       the program.
+
+      --do-proc-mem                    Request %mem and %nproc lines be added to the output
+                                       Gaussian input files if doing direct matrix elements.
+
+      --mem mem                        Amount of memory to be included in %mem output to
+                                       Gaussian input files. --do-proc-mem must be set.
+                                       Default is 8GB. Note input is not checked for validity.
+
+      --ncpu ncpu                      Number of processors to be included in %nproc output
+                                       to Gaussian input files. --do-proc-mem must be set.
+                                       Default is 2. Note input is not checked for validity.
+
+      --keep-inters                    Do not delete intemediate files used in the calculation.
+                                       Default is to delete intermediate files.
+
+      --initial-state weight_vector    Initial state for simulation. For a pure state, the  
                                        desired root can be input as a single integer. For a 
                                        mixed state, each non-zero weighted root should be 
                                        included along wih the specified weight (Default is
-                                       a ground state population of 1.0).  
+                                       a ground state population of 1.0). Note that the input 
+                                       vector is normalized regardles of input values.
                                    
                                        Example: [1,0.5:2,0.5] specifies an initial state with 
                                        50% weight on the lowest root and 50% weight on the 
                                        fourth root.
 
-      --time-step time_step            Time step for simulation (default 0.1 au).
+      --pulse-shape pulse              Pulse shape used in simulation. Options are:
+                                       1) rectangle
+                                          E(t) = E(0)*H(t-t0)
+                                       2) delta
+                                          E(t) = E(0)*d(t-t0) 
+                                       3) continuous 
+                                          E(t) = E(0)*sin(w(t-t0))*H(t-t0)
+                                       4) transform limited
+                                          E(t) = E(0)*exp(-(t-t0)^2/2*sigma^2)*sin(omega*(t-t0))
+                                       5) chirped pulse
+                                          E(t) = E(0)*exp(-(t-t0)^2/2*sigma^2)*
+                                                   sin((omega+beta(t-t0))*(t-t0))
 
-      --steps steps                    Number of steps to include in the calculation (default is 1000). 
+      --field-vector field_vector      Field polarization vector. Should be vector of length
+                                       three. The default is to orient on the z-axis. Note that
+                                       the initial vector is normalized regardless of input 
+                                       values.
+
+                                       Example: [0.5,0,-0.5] specifies a field orientation of 
+                                       1/sqrt(2) along the x axis and -1/sqrt(2) along the z axis.
+
+      --field-size field_magnitude     Maximum magnitude of field vector in simulation (au)
+                                       (default is 0.005 au = 25.7 MV/cm = 1.752 W/m^2 in free
+                                       space conditions).
+
+      --t0 time                        Time for either pulse onset or pulse maximum depending on
+                                       pulse type (default is 0.0 au).
+
+      --omega frequency                Frequency for pulse shapes that use it (default is 10.0 au). 
+
+      --sigma width                    Pulse width for pulse shapes that use it (default is 0.5 au). 
+
+      --beta shift                     Chirp parameter for pulse shapes that use it (default is 3.0 au). 
+
+      --tcf-start time                 Compute time correlation function starting from input time. The 
+                                       Fourier transform of this function when the start time is the time 
+                                       step after the delta pulse provides the absorption spectrum.
+
+      --time-step time_step            Time step for simulation in au (default 0.1 au = 2.42 as).
+
+      --simulation-time time           Total simulation time in au (default is 100.0 au = 2.42 fs).
 
       --help                           Output help documentation to terminal.
 
@@ -50,7 +133,6 @@ NOTES
     AUTHORS
       Lee M. Thompson, University of Louisville, lee.thompson.1@lousiville.edu
 COPYRIGHT
-      (c) 2021-2020 by Andrew D. Mahler and Lee M. Thompson distributed under terms of the
-      MIT license.
+      (c) 2021-2020 by Lee M. Thompson distributed under terms of the MIT license.
 
 ---------------------------------------------------------------------------
