@@ -428,18 +428,21 @@
         isubs = subs
         call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis,determinants, &
           mo_core_ham,mo_ERIs,UHF,CI_Hamiltonian,isubs)
-        if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian')
+        if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
         if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI dipole matrices'
         do i = 1, 3
           dipoleMO(i) = matmul(dagger(wavefunction%MO_Coefficients),&
             matmul(dipole(i),Wavefunction%MO_Coefficients))
-          if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)))
+          if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)),&
+            Blank_At_Bottom=.true.)
           call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis,determinants, &
             dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i),subs=isubs)
-          if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)))
+          if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)),&
+            Blank_At_Bottom=.true.)
           call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
           CI_Dipole(i) = iden - CI_Dipole(i)
-          if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//trim(num2char(i)))
+          if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//&
+            trim(num2char(i)),Blank_At_Bottom=.true.)
         endDo
       elseIf(ci_string.eq.'nonorthogonal') then
         if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building nonorthogonal CI Hamiltonian, CI overlap and CI dipole matrices'
@@ -464,12 +467,13 @@
             endDo
           endDo
         endDo
-        if(iPrint.ge.4) call CI_Overlap%print(6,'CI Overlap')
-        if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian')
+        if(iPrint.ge.4) call CI_Overlap%print(6,'CI Overlap',Blank_At_Bottom=.true.)
+        if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
         do i = 1, 3
           call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
           CI_Dipole(i) = iden - CI_Dipole(i)
-          if(iPrint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//trim(num2char(i)))
+          if(iPrint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//&
+            trim(num2char(i)),Blank_At_Bottom=.true.)
         endDo
       endIf
 !
@@ -482,8 +486,8 @@
         call CI_Hamiltonian%eigensys(CI_Overlap,wavefunction%pscf_energies,wavefunction%pscf_amplitudes)
       endIf
 
-      if(iPrint.ge.4) call wavefunction%pscf_amplitudes%print(iOut,'CI Eigenvectors')
-      if(iPrint.ge.3) call wavefunction%pscf_energies%print(iOut,'CI Eigenvalues')
+      if(iPrint.ge.4) call wavefunction%pscf_amplitudes%print(iOut,'CI Eigenvectors',Blank_At_Bottom=.true.)
+      if(iPrint.ge.3) call wavefunction%pscf_energies%print(iOut,'CI Eigenvalues',Blank_At_Bottom=.true.)
 !
 !     Diagonalize the dipole moment matrix to get transformation matrix U
 !
@@ -494,8 +498,10 @@
         elseIf(ci_string.eq.'nonorthogonal') then
           call CI_Dipole(i)%eigensys(CI_Overlap,dipole_eigvals(i),dipole_eigvecs(i))
         endIf
-        if(iPrint.ge.4) call dipole_eigvecs(i)%print(iOut,'CI Dipole Eigenvectors axis '//trim(num2char(i)))
-        if(iprint.ge.3) call dipole_eigvals(i)%print(iOut,'CI Dipole Eigenvalues axis '//trim(num2char(i)))
+        if(iPrint.ge.4) call dipole_eigvecs(i)%print(iOut,'CI Dipole Eigenvectors axis '//trim(num2char(i)),&
+          Blank_At_Bottom=.true.)
+        if(iprint.ge.3) call dipole_eigvals(i)%print(iOut,'CI Dipole Eigenvalues axis '//trim(num2char(i)),&
+          Blank_At_Bottom=.true.)
         if (ci_string.eq.'orthogonal') then
           Xmat(i) = matmul(dagger(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
           invXmat(i) = dagger(Xmat(i))
@@ -1024,8 +1030,8 @@
       integer(kind=int64)::i
 
 !
-      mo_I_occ = mo_I%orbitals('occupied',[int(nAlpha)],[int(nBeta)]) 
-      mo_J_occ = mo_J%orbitals('occupied',[int(nAlpha)],[int(nBeta)]) 
+      mo_I_occ = mqc_integral_output_block(mo_I%orbitals('occupied',[int(nAlpha)],[int(nBeta)]),'full') 
+      mo_J_occ = mqc_integral_output_block(mo_J%orbitals('occupied',[int(nAlpha)],[int(nBeta)]),'full') 
       
       mIJ = matmul(matmul(dagger(mo_I_occ),overlap%getBlock('full')),mo_J_occ)
       nIJ = mIJ%det()
@@ -1067,8 +1073,8 @@
       tMat3 = rhoMat%mat([int(nBasis)+1,int(nBasis)*2],[1,int(nBasis)])
       tMat4 = rhoMat%mat([1,int(nBasis)],[int(nBasis)+1,int(nBasis)*2])
 
-      if(MQC_Matrix_Norm((tMat1-tMat2)).lt.1.0e-14.and.tMat3%norm().lt.1.0e-14.and. &
-        tMat4%norm().lt.1.0e-14) then
+      if(MQC_Matrix_Norm((tMat1-tMat2)).lt.1.0e-14.and.&
+        tMat3%norm().lt.1.0e-14.and.tMat4%norm().lt.1.0e-14) then
         call mqc_integral_allocate(rho(1),'','space',tMat1)
       elseIf(tMat3%norm().lt.1.0e-14.and.tMat4%norm().lt.1.0e-14) then
         call mqc_integral_allocate(rho(1),'','spin',tMat1,tMat2)
@@ -1084,8 +1090,8 @@
         tmat3 = rhoMat%mat([int(nBasis)+1,int(nBasis)*2],[1,int(nBasis)])
         tmat4 = rhoMat%mat([1,int(nBasis)],[int(nBasis)+1,int(nBasis)*2])
       endIf
-      if(MQC_Matrix_Norm((tMat1-tMat2)).lt.1.0e-14.and.tMat3%norm().lt.1.0e-14.and. &
-        tMat4%norm().lt.1.0e-14) then
+      if(MQC_Matrix_Norm((tMat1-tMat2)).lt.1.0e-14.and.&
+        tMat3%norm().lt.1.0e-14.and.tMat4%norm().lt.1.0e-14) then
         call mqc_integral_allocate(rho(2),'','space',tMat1)
       elseIf(tMat3%norm().lt.1.0e-14.and.tMat4%norm().lt.1.0e-14) then
         call mqc_integral_allocate(rho(2),'','spin',tMat1,tMat2)
