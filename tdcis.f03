@@ -90,6 +90,7 @@
         elseIf(command.eq.'--sub-levels') then
 !
 !*      --sub-levels substitutions       Substitution levels permitted in truncated CI calculation. 
+!*                                       The default is all single substitutions.
 !*
 !*                                       Example: [1,2] specifies single and double substitutions.
 !*
@@ -185,7 +186,7 @@
         elseIf(command.eq.'--pulse-shape') then
 !
 !*      --pulse-shape pulse              Pulse shape used in simulation. Options are:
-!*                                       1) rectangle
+!*                                       1) rectangle (default)
 !*                                          E(t) = E(0)*H(t-t0)
 !*                                       2) delta
 !*                                          E(t) = E(0)*d(t-t0) 
@@ -579,21 +580,30 @@
         do j = 1, size(state_coeffs)
           td_ci_coeffs = td_ci_coeffs + state_coeffs%at(j)*wavefunction%pscf_amplitudes%vat([0],[j])
         endDo
-        call print_coeffs_and_pops(iOut,iPrint,2,td_ci_coeffs,'TD CI')
+        call print_coeffs_and_pops(iOut,iPrint,2,td_ci_coeffs/td_ci_coeffs%norm(),'TD CI')
 
         if(allocated(tcf_start)) then
-          if(delta_t*i.ge.tcf_start.and.delta_t*i.lt.tcf_start+delta_t) tcf_ci_epsilon = td_ci_coeffs
-          if(delta_t*i.ge.tcf_start) call tcf%push(dot_product(dagger(tcf_ci_epsilon),td_ci_coeffs))
+          if(delta_t*i.ge.tcf_start.and.delta_t*i.lt.tcf_start+delta_t) tcf_ci_epsilon = td_ci_coeffs/td_ci_coeffs%norm()
+          if(delta_t*i.ge.tcf_start) call tcf%push(dot_product(dagger(tcf_ci_epsilon),td_ci_coeffs/td_ci_coeffs%norm()))
         endIf
 
         final_energy = get_CI_Energy(CI_Hamiltonian,td_ci_coeffs) 
         if(iPrint.ge.1.or.i.eq.maxsteps) call final_energy%print(6,'Energy (au)',Blank_At_Bottom=.true.,&
           FormatStr='F14.8')
 
-        density = get_one_gamma_matrix(iOut,iPrint,wavefunction%nBasis,determinants,td_ci_coeffs,UHF,subs=isubs)
-        if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'MO Density matrix',Blank_At_Bottom=.true.)
-        density = 0.5*matmul(matmul(wavefunction%mo_coefficients,density),dagger(wavefunction%mo_coefficients))
-        if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'AO Density matrix',Blank_At_Bottom=.true.)
+        if(ci_string.eq.'orthogonal') then
+          density = get_one_gamma_matrix(iOut,iPrint,wavefunction%nBasis,determinants,td_ci_coeffs,UHF,subs=isubs)
+          if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'MO Density matrix',Blank_At_Bottom=.true.)
+          density = matmul(matmul(wavefunction%mo_coefficients,density),dagger(wavefunction%mo_coefficients))
+          if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'AO Density matrix',Blank_At_Bottom=.true.)
+        else
+          density = get_noci_density(td_ci_coeffs,mo_list,wavefunction%overlap_matrix,wavefunction%nBasis,&
+            wavefunction%nAlpha,wavefunction%nBeta) 
+          if(iPrint.ge.1.or.i.eq.maxsteps) call mqc_print(matmul(matmul(matmul(dagger(mo_list(1)),&
+            wavefunction%overlap_matrix),density),matmul(wavefunction%overlap_matrix,mo_list(1))),&
+            6,'MO Density matrix (projected on MOs 1)',Blank_At_Bottom=.true.)
+          if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'AO Density matrix',Blank_At_Bottom=.true.)
+        endIf
         do j = 1, 3
           call total_dipole%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
         endDo
@@ -1407,6 +1417,9 @@
 !
 !     PROCEDURE write_gau_fock_file
 !
+!     Write out a Gaussian input file with non-standard route used for computing Fock matrix 
+!     with direct matrix elements. Code requires additional development Gaussian code.
+!
       subroutine write_gau_fock_file(matrixFile,diag,ahrm,doProcMem,mem,ncpu)
 
       implicit none
@@ -1448,6 +1461,52 @@
       close(unit=unitno)
     
       end subroutine write_gau_fock_file
+!
+!
+!     PROCEDURE get_noci_density
+!
+!     get_noci_density is a function that returns the NOCI one-PDM.
+!
+      function get_noci_density(eigenvecs,mo_list,overlap,nBasis,nAlpha,nBeta) result(oneDM)
+
+      implicit none
+
+!     input/output variables
+      type(mqc_vector),intent(in)::eigenvecs
+      type(mqc_scf_integral),dimension(:),allocatable,intent(in)::mo_list
+      type(mqc_scf_integral),intent(in)::overlap
+      type(mqc_scalar),intent(in)::nBasis,nAlpha,nBeta
+      type(mqc_scf_integral)::oneDM
+
+!     subroutine variables
+      type(mqc_scf_integral),dimension(2)::rho
+      type(mqc_scalar)::nIJ,pnIJ,weight
+      integer(kind=int64)::nullSize
+      type(mqc_matrix)::oneDMmat,tMat1,tMat2,tMat3,tMat4
+!
+      call oneDMmat%init(int(nBasis)*2,int(nBasis)*2)
+      do i = 1, numFile
+        do j = 1, i
+          call get_rhos(rho,nIJ,pnIJ,nullSize,mo_list(i),mo_list(j),overlap,nBasis,nAlpha,nBeta)
+          weight = conjg(eigenvecs%at(i))*pnIJ*eigenvecs%at(j)
+          oneDMmat = oneDMmat + weight*rho(2)%getBlock('full')
+          if(i.ne.j) oneDMmat = oneDMmat + conjg(weight)*dagger(rho(2)%getBlock('full'))
+        endDo
+      endDo
+      tmat1 = oneDMmat%mat([1,int(nBasis)],[1,int(nBasis)])
+      tmat2 = oneDMmat%mat([int(nBasis)+1,int(nBasis)*2],[int(nBasis+1),int(nBasis)*2])
+      tmat3 = oneDMmat%mat([int(nBasis)+1,int(nBasis)*2],[1,int(nBasis)])
+      tmat4 = oneDMmat%mat([1,int(nBasis)],[int(nBasis)+1,int(nBasis)*2])
+      if(MQC_Matrix_Norm((tMat1-tMat2)).lt.1.0e-14.and.&
+        tMat3%norm().lt.1.0e-14.and.tMat4%norm().lt.1.0e-14) then
+        call mqc_integral_allocate(oneDM,'','space',tMat1)
+      elseIf(tMat3%norm().lt.1.0e-14.and.tMat4%norm().lt.1.0e-14) then
+        call mqc_integral_allocate(oneDM,'','spin',tMat1,tMat2)
+      else
+        call mqc_integral_allocate(oneDM,'','general',tMat1,tMat2,tMat4,tMat3)
+      endIf
+!
+      end function get_noci_density
 !
 !
 !*    NOTES

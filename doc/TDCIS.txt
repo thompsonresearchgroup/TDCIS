@@ -19,6 +19,7 @@ OPTIONS
                                        0-4.
 
       --sub-levels substitutions       Substitution levels permitted in truncated CI calculation. 
+                                       The default is all single substitutions.
 
                                        Example: [1,2] specifies single and double substitutions.
 
