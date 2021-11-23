@@ -13,7 +13,9 @@ USAGE
         [--omega frequency] [--sigma width] [--beta shift] [--tcf-start time] 
         [--time-step time_step] [--simulation-time time] [--help]
 OPTIONS
-      -f matrix_file                   Input matrix file with initial set of molecular orbitals.
+      -f matrix_file                   Input matrix file with initial set of molecular orbitals. 
+                                       The first line contains the number of matrix files in the 
+                                       input, and then on each line is a separate matrix file.
 
       --print-level print_level        Verbosity of output. Default print level is 1. Options
                                        0-4.
@@ -73,7 +75,7 @@ OPTIONS
                                        fourth root.
 
       --pulse-shape pulse              Pulse shape used in simulation. Options are:
-                                       1) rectangle
+                                       1) rectangle (default)
                                           E(t) = E(0)*H(t-t0)
                                        2) delta
                                           E(t) = E(0)*d(t-t0) 

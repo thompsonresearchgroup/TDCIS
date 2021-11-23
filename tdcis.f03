@@ -75,7 +75,9 @@
         call mqc_get_command_argument(i,command)
         if(command.eq.'-f') then
 !
-!*      -f matrix_file                   Input matrix file with initial set of molecular orbitals.
+!*      -f matrix_file                   Input matrix file with initial set of molecular orbitals. 
+!*                                       The first line contains the number of matrix files in the 
+!*                                       input, and then on each line is a separate matrix file.
 !*
           call mqc_get_command_argument(i+1,fileName)
           j = i+2
