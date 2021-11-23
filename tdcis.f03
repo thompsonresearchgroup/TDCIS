@@ -1483,6 +1483,7 @@
       type(mqc_scalar)::nIJ,pnIJ,weight
       integer(kind=int64)::nullSize
       type(mqc_matrix)::oneDMmat,tMat1,tMat2,tMat3,tMat4
+      integer::i,j
 !
       call oneDMmat%init(int(nBasis)*2,int(nBasis)*2)
       do i = 1, numFile
