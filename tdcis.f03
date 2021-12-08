@@ -22,7 +22,7 @@
       character(len=256)::vecString,root_string='',sub_string='',field_string='',&
         pulseShape='rectangle',tcf_file='tcf',file_tmp,ci_string='orthogonal',gauss_exe='$g16root/g16/g16',&
         mem='8GB',ncpu='2'
-      integer(kind=int64)::iOut=6,iPrint=1,iUnit,i,j,k,maxsteps,flag,stat_num,numFile=0,nullSize
+      integer(kind=int64)::iOut=6,iPrint=1,iUnit,i,j,k,maxsteps,flag,stat_num,numFile=0,nullSize,saveDen=0
       integer(kind=int64),dimension(:),allocatable::isubs
       real(kind=real64)::delta_t=0.1,field_size=0.005,simTime=100.0,t0=0.0,sigma=0.5,omega=10.0,&
         beta=3.0
@@ -278,6 +278,15 @@
           call mqc_get_command_argument(i+1,command)
           read(command,'(F20.8)') simTime
           j = i + 2
+        elseif(command.eq.'--save') then
+!
+!*      --save steps                     Save the density to a matrix file each time the specified interval
+!*                                       of steps is reached, starting with the first step. A value of zero
+!*                                       (default) means that no densities are saved.
+!*
+          call mqc_get_command_argument(i+1,command)
+          read(command,'(I5)') saveDen
+          j = i + 2
         elseIf(command.eq.'--help') then
 !
 !*      --help                           Output help documentation to terminal.
@@ -375,7 +384,7 @@
         if (wavefunction%wf_complex) call mqc_error('Complex wavefunctions unsupported')
       endIf
 !
-      if(doDirect) then
+      if(doDirect.or.abs(saveDen).gt.0) then
         call fileInfo%getArray('SHELL TO ATOM MAP',sh2AtMp)
         call fileInfo%getArray('SHELL TYPES',shlTyp)
         call fileInfo%getArray('NUMBER OF PRIMITIVES PER SHELL',nPrmSh)
@@ -383,8 +392,8 @@
         call fileInfo%getArray('CONTRACTION COEFFICIENTS',conCoef)
         call fileInfo%getArray('P(S=P) CONTRACTION COEFFICIENTS',conCoTwo)
         call fileInfo%getArray('COORDINATES OF EACH SHELL',shCoor)
-        if(ci_string.eq.'orthogonal') call mqc_error('Direct matrix elements not possible with orthogonal CI')
       endIf
+      if(doDirect.and.ci_string.eq.'orthogonal') call mqc_error('Direct matrix elements not possible with orthogonal CI')
 !
 !
 !     Compute the nuclear-nuclear repulsion energy.
@@ -410,7 +419,7 @@
 !
       if(ci_string.ne.'nonorthogonal') then
         if(iPrint.ge.1) write(iOut,'(1X,A)') 'Transforming MO integrals'//NEW_LINE('A')
-        mo_core_ham = matmul(transpose(wavefunction%MO_Coefficients),matmul(wavefunction%core_Hamiltonian, &
+        mo_core_ham = matmul(dagger(wavefunction%MO_Coefficients),matmul(wavefunction%core_Hamiltonian, &
             Wavefunction%MO_Coefficients))
         if(IPrint.ge.4) call mo_core_ham%print(iOut,'MO Basis Core Hamiltonian') 
         call twoERI_trans(iOut,iPrint,wavefunction%MO_Coefficients,ERIs(1),mo_ERIs)
@@ -465,7 +474,7 @@
               mem,ncpu,keep_intermediate_files)
             call CI_Hamiltonian%put(hIJ,i,j,'hermitian')
             do k = 1, 3
-              dij = get_dij(pnij,rho(1),dipole(k))
+              dij = get_dij(pnij,nullSize,rho(2),dipole(k))
               call CI_Dipole(k)%put(dij,i,j,'hermitian')
             endDo
           endDo
@@ -561,7 +570,7 @@
 !     Krause et al. J. Phys. Chem., 2007, 127, 034107.
 !
       write(iOut,'(1X,A)') 'STARTING TIME PROPAGATION'//NEW_LINE('A')
-      do i = 1, maxsteps
+      do i = 0, maxsteps
         if(iPrint.ge.1) write(iOut,'(1X,A)') repeat('=',44)//NEW_LINE('A')
         if(i.eq.maxsteps) write(iOut,'(1X,A)') repeat(' ',16)//'FINAL TIME STEP'//NEW_LINE('A')//NEW_LINE('A')//&
         ' '//repeat('=',44)//NEW_LINE('A')
@@ -570,12 +579,14 @@
         td_field_vector = get_field_vector(delta_t,i,field_vector,pulseShape,t0,omega,sigma,beta)
         if(iPrint.ge.1) call td_field_vector%print(6,'Applied field vector',Blank_At_Bottom=.true.)
 
-        state_coeffs = exp((-1)*imag*delta_t*wavefunction%pscf_energies).ewp.state_coeffs
-        do j = 3, 1, -1
-          state_coeffs = matmul(Xmat(j),state_coeffs)
-          state_coeffs = exp(imag*delta_t*td_field_vector%at(j)*dipole_eigvals(j)).ewp.state_coeffs
-          state_coeffs = matmul(invXmat(j),state_coeffs)
-        endDo
+        if(i.gt.0) then
+          state_coeffs = exp((-1)*imag*delta_t*wavefunction%pscf_energies).ewp.state_coeffs
+          do j = 3, 1, -1
+            state_coeffs = matmul(Xmat(j),state_coeffs)
+            state_coeffs = exp(imag*delta_t*td_field_vector%at(j)*dipole_eigvals(j)).ewp.state_coeffs
+            state_coeffs = matmul(invXmat(j),state_coeffs)
+          endDo
+        endIf
         call print_coeffs_and_pops(iOut,iPrint,1,state_coeffs,'TD State')
 
         call td_ci_coeffs%init(size(wavefunction%pscf_amplitudes,1))
@@ -610,25 +621,36 @@
           call total_dipole%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
         endDo
         call total_dipole%print(6,'Total dipole',Blank_At_Bottom=.true.)
+
+        if(abs(saveDen).gt.0) then
+          if(mod(i,abs(saveDen)).eq.0) call outputCheckFile(fileInfo,'MO-matrix-'//trim(num2char(i)),&
+            density,sh2AtMp,shlTyp,nPrmSh,prmExp,conCoef,conCoTwo,shCoor,wavefunction)
+        endIf
+
       endDo
 
       if(allocated(tcf_start)) then
-        i = 1
-        file_exists = .true.
-        file_tmp = trim(tcf_file)
-        do while (file_exists) 
-          inquire(file=trim(file_tmp)//'.dat',exist=file_exists)
-          if(file_exists) then
-            i = i+1
-            file_tmp = trim(tcf_file)
-            call build_string_add_int(i,file_tmp,20)
-          else
-            open(newunit=iunit,file=trim(file_tmp)//'.dat',status='new',iostat=stat_num)
-            if(stat_num.ne.0) call mqc_error_a('Could not open file',6,'file name',trim(file_tmp)//'.dat')
-            call tcf%print(iUnit,'# time ('//trim(num2char(delta_t))//'as)'//repeat(' ',10)//'time correlation function')
-            write(iOut,'(A)') 'Saving data to file name '//trim(file_tmp)//'.dat'
-          endIf
-        endDo
+        if(tcf_start.gt.simTime) then
+          write(iOut,'(A)') 'Time correlation function requested to start after simulation time' 
+        else
+          i = 1
+          file_exists = .true.
+          file_tmp = trim(tcf_file)
+          do while (file_exists) 
+            inquire(file=trim(file_tmp)//'.dat',exist=file_exists)
+            if(file_exists) then
+              i = i+1
+              file_tmp = trim(tcf_file)
+              call build_string_add_int(i,file_tmp,20)
+            else
+              open(newunit=iunit,file=trim(file_tmp)//'.dat',status='new',iostat=stat_num)
+              if(stat_num.ne.0) call mqc_error_a('Could not open file',6,'file name',trim(file_tmp)//'.dat')
+              call tcf%print(iUnit,'# time (time step: '//trim(num2char(delta_t))//'as, tcf start: '//&
+                trim(num2char(tcf_start))//')'//repeat(' ',10)//'time correlation function')
+              write(iOut,'(A)') 'Saving data to file name '//trim(file_tmp)//'.dat'
+            endIf
+          endDo
+        endIf
       endIf
 
 !
@@ -1349,15 +1371,22 @@
 !     between two (nonorthogonal) determinants, given the transition density matrices and 
 !     required integrals.
 !
-      function get_dij(pnij,rho,oneElInt) result(dIJ)
+      function get_dij(pnij,nullSize,rho,oneElInt) result(dIJ)
 
       implicit none
       type(mqc_scalar),intent(in)::pnij
+      integer(kind=int64),intent(in)::nullSize
       type(mqc_scf_integral),intent(in)::rho
       type(mqc_scf_integral),intent(in)::oneElInt
       type(mqc_scalar)::dIJ
 
-      dIJ = pnij*contraction(rho,oneElInt)
+      real(kind=real64)::zero=0.0
+
+      if(abs(nullSize).lt.2) then
+        dIJ = pnij*contraction(rho,oneElInt)
+      else
+        dIJ = zero
+      endIf
 
       end function get_dij
 !
@@ -1510,6 +1539,59 @@
       endIf
 !
       end function get_noci_density
+!
+!
+!     PROCEDURE outputCheckFile
+!
+!     outputMatFile is a subroutine that outputs a checkpoint file that can then be read into 
+!     Gaussian or Gaussview. The purpose of this routine is to enable visualization of
+!     the density matrix time evolution in Gaussview.
+!
+      subroutine outputCheckFile(temp_file,fileName,density,sh2AtMp,shlTyp,nPrmSh,prmExp,&
+          conCoef,conCoTwo,shCoor,wavefunction) 
+
+      implicit none
+
+!     Input/output variables
+      type(mqc_gaussian_unformatted_matrix_file),intent(inOut)::temp_file
+      character(len=*),intent(in)::fileName
+      type(mqc_scf_integral),intent(in)::density
+      type(mqc_matrix),intent(in)::sh2AtMp,shlTyp,nPrmSh,prmExp,conCoef,conCoTwo,shCoor
+      class(mqc_wavefunction),intent(in)::wavefunction
+!
+!     subroutine variables
+      character(len=80)::spinSymStr
+      
+      temp_file%icgu = 111
+      if(density%type().eq.'space') then
+        spinSymStr = 'space'
+        if(MQC_Matrix_HaveComplex(density%getBlock('full'))) temp_file%icgu = temp_file%icgu + 10
+      elseIf(density%type().eq.'spin') then
+        spinSymStr = 'spin'
+        temp_file%icgu = temp_file%icgu + 1
+        if(MQC_Matrix_HaveComplex(density%getBlock('full'))) temp_file%icgu = temp_file%icgu + 10
+      else
+        spinSymStr = 'general'
+        temp_file%icgu = temp_file%icgu + 100
+        temp_file%icgu = temp_file%icgu + 10
+      endIf
+      call temp_file%create(trim(fileName)//'.mat')
+      call temp_file%writeArray('SHELL TO ATOM MAP',sh2AtMp)
+      call temp_file%writeArray('SHELL TYPES',shlTyp)
+      call temp_file%writeArray('NUMBER OF PRIMITIVES PER SHELL',nPrmSh)
+      call temp_file%writeArray('PRIMITIVE EXPONENTS',prmExp)
+      call temp_file%writeArray('CONTRACTION COEFFICIENTS',conCoef)
+      call temp_file%writeArray('P(S=P) CONTRACTION COEFFICIENTS',conCoTwo)
+      call temp_file%writeArray('COORDINATES OF EACH SHELL',shCoor)
+      call temp_file%writeESTObj('density',est_integral=density,override=spinSymStr)
+      call temp_file%writeESTObj('scf density',est_integral=wavefunction%scf_density_matrix,override=spinSymStr)
+      call temp_file%writeESTObj('mo coefficients',est_integral=wavefunction%mo_coefficients,override=spinSymStr)
+      call temp_file%writeESTObj('mo energies',est_eigenvalues=wavefunction%mo_energies,override=spinSymStr)
+      call Close_MatF(temp_file%UnitNumber)
+
+      call execute_command_line("unfchk -matrix "//trim(fileName)//".mat "//trim(fileName)//".chk")
+
+      end subroutine outputCheckFile 
 !
 !
 !*    NOTES
