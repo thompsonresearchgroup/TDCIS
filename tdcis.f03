@@ -419,7 +419,7 @@
 !
       if(ci_string.ne.'nonorthogonal') then
         if(iPrint.ge.1) write(iOut,'(1X,A)') 'Transforming MO integrals'//NEW_LINE('A')
-        mo_core_ham = matmul(transpose(wavefunction%MO_Coefficients),matmul(wavefunction%core_Hamiltonian, &
+        mo_core_ham = matmul(dagger(wavefunction%MO_Coefficients),matmul(wavefunction%core_Hamiltonian, &
             Wavefunction%MO_Coefficients))
         if(IPrint.ge.4) call mo_core_ham%print(iOut,'MO Basis Core Hamiltonian') 
         call twoERI_trans(iOut,iPrint,wavefunction%MO_Coefficients,ERIs(1),mo_ERIs)
@@ -474,7 +474,7 @@
               mem,ncpu,keep_intermediate_files)
             call CI_Hamiltonian%put(hIJ,i,j,'hermitian')
             do k = 1, 3
-              dij = get_dij(pnij,rho(1),dipole(k))
+              dij = get_dij(pnij,nullSize,rho(2),dipole(k))
               call CI_Dipole(k)%put(dij,i,j,'hermitian')
             endDo
           endDo
@@ -1371,15 +1371,22 @@
 !     between two (nonorthogonal) determinants, given the transition density matrices and 
 !     required integrals.
 !
-      function get_dij(pnij,rho,oneElInt) result(dIJ)
+      function get_dij(pnij,nullSize,rho,oneElInt) result(dIJ)
 
       implicit none
       type(mqc_scalar),intent(in)::pnij
+      integer(kind=int64),intent(in)::nullSize
       type(mqc_scf_integral),intent(in)::rho
       type(mqc_scf_integral),intent(in)::oneElInt
       type(mqc_scalar)::dIJ
 
-      dIJ = pnij*contraction(rho,oneElInt)
+      real(kind=real64)::zero=0.0
+
+      if(abs(nullSize).lt.2) then
+        dIJ = pnij*contraction(rho,oneElInt)
+      else
+        dIJ = zero
+      endIf
 
       end function get_dij
 !
