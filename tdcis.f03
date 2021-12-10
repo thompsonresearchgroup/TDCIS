@@ -20,10 +20,10 @@
       character(len=:),allocatable::command,fileName,help_path
       character(len=256),dimension(:),allocatable::fileList
       character(len=256)::vecString,root_string='',sub_string='',field_string='',&
-        pulseShape='rectangle',tcf_file='tcf',file_tmp,ci_string='orthogonal',gauss_exe='$g16root/g16/g16',&
-        mem='8GB',ncpu='2'
+        pulseShape='rectangle',tcf_file='tcf',file_tmp,ci_string='oci',gauss_exe='$g16root/g16/g16',&
+        mem='8GB',ncpu='2',alterations='',activeSpace=''
       integer(kind=int64)::iOut=6,iPrint=1,iUnit,i,j,k,maxsteps,flag,stat_num,numFile=0,nullSize,saveDen=0
-      integer(kind=int64),dimension(:),allocatable::isubs
+      integer(kind=int64),dimension(:),allocatable::isubs,inactiveList,activeList,alphaList,betaList
       real(kind=real64)::delta_t=0.1,field_size=0.005,simTime=100.0,t0=0.0,sigma=0.5,omega=10.0,&
         beta=3.0
       real(kind=real64),allocatable::tcf_start
@@ -49,15 +49,16 @@
       real(kind=real64),parameter::zero_thresh=1.00E-8
 !
 !*    USAGE
-!*      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--sub-levels substitutions] 
-!*        [--ci-type type_string] [--direct] [--gauss-exe gaussian_executable_string] 
-!*        [--do-proc-mem] [--mem mem] [--ncpu ncpu] [--keep-inters] [--intial-state weight_vector] 
-!*        [--pulse-shape pulse] [--field-vector field_vector] [--field-size magnitude] [--t0 time] 
-!*        [--omega frequency] [--sigma width] [--beta shift] [--tcf-start time] 
-!*        [--time-step time_step] [--simulation-time time] [--help]
+!*      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--sub-levels <substitutions>] 
+!*        [--active-space <active_space>] [--alter <alter_list>] [--ci-type <type_string>] 
+!*        [--direct] [--gauss-exe <gaussian_executable_string>] [--do-proc-mem] [--mem <mem>] 
+!*        [--ncpu <ncpu>] [--keep-inters] [--intial-state <weight_vector>] [--pulse-shape <pulse>] 
+!*        [--field-vector <field_vector>] [--field-size <magnitude>] [--t0 <time>] 
+!*        [--omega <frequency>] [--sigma <width>] [--beta <shift>] [--tcf-start <time>] 
+!*        [--time-step <time_step>] [--simulation-time <time>] [--help]
 !*
 !*    OPTIONS
-!
+!* 
 !
 !     Print program information.
 !
@@ -69,6 +70,8 @@
 !
 !     Parse input options.
 !
+!*   1. Input/output
+!*
       j = 1
       do i=1,command_argument_count()
         if(i.ne.j) cycle
@@ -89,6 +92,9 @@
           call mqc_get_command_argument(i+1,command)
           read(command,'(I1)') iPrint
           j = i + 2
+!
+!*   2. Determinant expansion 
+!*
         elseIf(command.eq.'--sub-levels') then
 !
 !*      --sub-levels substitutions       Substitution levels permitted in truncated CI calculation. 
@@ -99,33 +105,85 @@
           call mqc_get_command_argument(i+1,command)
           sub_string = command
           j = i+2
+        elseIf(command.eq.'--active-space') then
+!
+!*      --active-space active_space      Defines orbital space in which to construct initial basis
+!*                                       determinant expansion through orbital swaps. For each input
+!*                                       solution the number of electrons and orbitals in the active
+!*                                       space should be specified.
+!*
+!*                                       Example: [4,4:3,6] specifies an expansion of four electrons
+!*                                       in four orbitals in the first input orbitals and an
+!*                                       expansion of three electrons in six orbitals in the second
+!*                                       input orbitals.
+!*
+          call mqc_get_command_argument(i+1,command)
+          activeSpace = command
+          j = i+2
+        elseIf(command.eq.'--alter') then
+!
+!*      --alter alter_list               Changes the order of orbitals in the input molecular
+!*                                       orbitals. Alterations to each input orbitals should be
+!*                                       colon separated and the two orbital numbers to be swapped
+!*                                       should be separated by a if two alpha orbitals will be
+!*                                       swapped, or b if two beta orbitals will be swapped.
+!*                                       Different orbital swaps should be comma separated.
+!*
+!*                                       Example: [3a4,2b4:5a6] swaps alpha orbitals 3 and 4 and
+!*                                       beta orbitals 2 and 4 in input orbitals 1, and swaps alpha
+!*                                       orbitals 5 and 6 in input orbitals 2.
+!*
+          call mqc_get_command_argument(i+1,command)
+          alterations = command
+          j = i+2
         elseIf(command.eq.'--ci-type') then
 !
 !*      --ci-type type_string            Specifies the type of configuration interaction. Options
 !*                                       are:
-!*                                       1) orthogonal (default)
+!*                                       1) oci (default)
 !*                                          Perform orthogonal configuration interaction with 
 !*                                          determinant expansion specified by sub-levels option.
 !*                                          Only one matrix file should be specified in the input 
 !*                                          file is expected and additional inputs will result in 
 !*                                          an error.
-!*                                       2) nonorthogonal
+!*                                       2) ocas
+!*                                          Perform orthogonal complete active space determinant 
+!*                                          expansion specified by active-space option. Only one 
+!*                                          matrix file should be specified in the input file is 
+!*                                          expected and additional inputs will result in an 
+!*                                          error.
+!*                                       3) noci
 !*                                          Perform nonorthogonal configuration interaction with 
 !*                                          determinant expansion specified by matrix files 
 !*                                          listed in input file.
-!*                                       3) hybrid (not yet implemented)
-!*                                          Perform the orthogonal expansion specified by the sub-
-!*                                          levels option on each matrix file in the input file
-!*                                          which are generally nonorthogonal.
+!*                                       4) hci (not yet implemented)
+!*                                          Perform a hybrid configuration determinant expansion.
+!*                                          That is, an orthogonal truncated configuration 
+!*                                          interaction determinant expansion on molecular 
+!*                                          orbitals in each matrix file in the input file, which 
+!*                                          generally leads to mixed orthogonal and nonorthogonal 
+!*                                          determinants. Substitution levels are specified by 
+!*                                          sub-levels option.
+!*                                       5) hcas (not yet implemented)
+!*                                          Perform a hybrid complete active space determinant 
+!*                                          expansion. That is, an orthogonal complete active 
+!*                                          space determinant expansion on molecular orbitals in 
+!*                                          each matrix file in the input file, which generally 
+!*                                          leads to mixed orthogonal and nonorthogonal 
+!*                                          determinants. Active spaces are specified by active-
+!*                                          space option.
 !*
           call mqc_get_command_argument(i+1,command)
           ci_string = command
           j = i+2
+!
+!*   3. Hamiltonian matrix construction
+!*
         elseif(command.eq.'--direct') then
- !
- !*      --direct                         Avoid the use of 2ERIs in nonorthogonal code. Gaussian 
- !*                                       is required if requested.
- !*
+!
+!*      --direct                         Avoid the use of 2ERIs in nonorthogonal code. Gaussian 
+!*                                       is required if requested.
+!*
           doDirect=.true.
           j = i + 1
         elseIf(command.eq.'--gauss-exe') then
@@ -169,6 +227,9 @@
 !*
           keep_intermediate_files=.true.
           j = i + 1
+!
+!*   4. Initial conditions
+!*
         elseIf(command.eq.'--initial-state') then
 !
 !*      --initial-state weight_vector    Initial state for simulation. For a pure state, the  
@@ -185,6 +246,9 @@
           call mqc_get_command_argument(i+1,command)
           root_string = command
           j=i+2
+!
+!*   5. Applied field 
+!*
         elseIf(command.eq.'--pulse-shape') then
 !
 !*      --pulse-shape pulse              Pulse shape used in simulation. Options are:
@@ -254,6 +318,9 @@
           call mqc_get_command_argument(i+1,command)
           read(command,'(F12.6)') sigma
           j = i + 2
+!
+!*   6. Simulation parameters
+!* 
         elseif(command.eq.'--tcf-start') then
 !
 !*      --tcf-start time                 Compute time correlation function starting from input time. The 
@@ -317,19 +384,28 @@
       endDo
       close(unit=iUnit)
 !
-      if(ci_string.eq.'orthogonal'.and.numFile.ne.1) then
+      if((ci_string.eq.'oci'.or.ci_string.eq.'ocas').and.numFile.ne.1) then
         call mqc_error('Multiple matrix files input to requested orthogonal CI expansion.&
           & Use sub-levels option to provide expansion',iOut)
-      elseIf(ci_string.eq.'orthogonal'.or.ci_string.eq.'nonorthogonal') then
+      elseIf(ci_string.eq.'oci'.or.ci_string.eq.'ocas'.or.ci_string.eq.'noci') then
         allocate(mo_list(numFile))
         do i = 1, numFile
           call fileInfo%getESTObj('mo coefficients',est_integral=mo_list(i),filename=fileList(i))
           if(iPrint.ge.4) call mo_list(i)%print(iOut,'MO coefficients from matrix file '//trim(num2char(i)))
         endDo
-      elseIf(ci_string.eq.'hybrid') then
+      elseIf(ci_string.eq.'hci'.or.ci_string.eq.'hcas') then
         call mqc_error('Hybrid ci type is not yet implemented',iOut)
       else
         call mqc_error_a('Unrecognized CI type string provided',iOut,'ci_string',ci_string)
+      endIf
+!
+      if(len_trim(alterations).ne.0) then
+        call orbital_swapper(alterations,mo_list)
+        if(iPrint.ge.4) then
+          do i = 1, numFile
+            call mo_list(i)%print(iOut,'Altered MO coefficients '//trim(num2char(i)))
+          endDo
+        endIf
       endIf
 !
       call fileInfo%load(fileList(1))
@@ -344,19 +420,19 @@
       if(iPrint.ge.4) call dipole(3)%print(6,'AO dipole z integrals')
 !
       if(.not.doDirect) then
-        if(ci_string.eq.'orthogonal') then
+        if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
           allocate(eris(1))
         else
           allocate(eris(3))
         endIf
         call fileInfo%get2ERIs('regular',eris(1),foundERI=found)
-        if(found.and.ci_string.ne.'orthogonal') then
+        if(found.and.ci_string.ne.'oci'.and.ci_string.ne.'ocas') then
           eris(2) = eris(1)
           eris(3) = eris(1)
           call mqc_twoeris_transform(eris(1),'raffenetti1')
           call mqc_twoeris_transform(eris(2),'raffenetti2')
           call mqc_twoeris_transform(eris(3),'raffenetti3')
-        elseIf(ci_string.ne.'orthogonal') then
+        elseIf(ci_string.ne.'oci'.and.ci_string.ne.'ocas') then
           call fileInfo%get2ERIs('raffenetti1',eris(1),foundERI=found)
           if(found) call fileInfo%get2ERIs('raffenetti2',eris(2),foundERI=found)
           if(found) call fileInfo%get2ERIs('raffenetti3',eris(3),foundERI=found)
@@ -370,7 +446,7 @@
         endIf
       endIf
 !
-      if(ci_string.ne.'nonorthogonal') then
+      if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
         if(wavefunction%wf_type.eq.'U') then
           UHF = .true.
           if(iPrint.ge.3) write(iOut,'(1X,A)') 'Found UHF wavefunction'//NEW_LINE('A')
@@ -393,7 +469,8 @@
         call fileInfo%getArray('P(S=P) CONTRACTION COEFFICIENTS',conCoTwo)
         call fileInfo%getArray('COORDINATES OF EACH SHELL',shCoor)
       endIf
-      if(doDirect.and.ci_string.eq.'orthogonal') call mqc_error('Direct matrix elements not possible with orthogonal CI')
+      if(doDirect.and.(ci_string.eq.'oci'.or.ci_string.eq.'ocas')) &
+        call mqc_error('Direct matrix elements not possible with orthogonal CI')
 !
 !
 !     Compute the nuclear-nuclear repulsion energy.
@@ -404,7 +481,7 @@
 !
 !     Generate Slater determinants wavefunction expansion if orthogonal expansion requested. 
 !
-      if(ci_string.ne.'nonorthogonal') then
+      if(ci_string.eq.'oci') then
         call substitution_builder(sub_string,subs)
         if(iPrint.ge.1) then
           write(iOut,'(1X,A)') 'Building Determinant Strings'
@@ -413,11 +490,22 @@
         isubs = [(i, i=1,int(maxval(subs)))]
         call trci_dets_string(iOut,iPrint,wavefunction%nBasis,wavefunction%nAlpha, &
           Wavefunction%nBeta,isubs,determinants)
+      elseIf(ci_string.eq.'ocas') then
+        call parse_active_space(activeSpace,numFile,wavefunction%nBasis,wavefunction%nAlpha,&
+          Wavefunction%nBeta,Wavefunction%nElectrons,activeList,inactiveList,alphaList,betaList)
+        if(iPrint.ge.1) then
+          write(iOut,'(1X,A)') 'Building Determinant Strings'
+          call mqc_print(6,activeList,'Active orbitals')
+          call mqc_print(6,inactiveList,'Core orbitals')
+          call mqc_print(6,alphaList,'Active alpha electrons')
+          call mqc_print(6,betaList,'Active beta electrons')
+        endIf
+        call gen_det_str(iOut,iPrint,activeList(1),alphaList(1),betaList(1),determinants,inactiveList(1))
       endIf
 !
 !     Transform one and two-electron integrals to MO basis (only if performing orthogonal CI).
 !
-      if(ci_string.ne.'nonorthogonal') then
+      if(ci_string.ne.'noci') then
         if(iPrint.ge.1) write(iOut,'(1X,A)') 'Transforming MO integrals'//NEW_LINE('A')
         mo_core_ham = matmul(dagger(wavefunction%MO_Coefficients),matmul(wavefunction%core_Hamiltonian, &
             Wavefunction%MO_Coefficients))
@@ -434,7 +522,7 @@
 !
 !     Generate field-free Hamiltonian matrix and dipole matrices (in length form) in CI basis.
 !
-      if(ci_string.eq.'orthogonal') then
+      if(ci_string.eq.'oci') then
         if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
         call subs%unshift(0)
         isubs = subs
@@ -456,7 +544,27 @@
           if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//&
             trim(num2char(i)),Blank_At_Bottom=.true.)
         endDo
-      elseIf(ci_string.eq.'nonorthogonal') then
+      elseIf(ci_string.eq.'ocas') then
+        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
+        call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis,determinants, &
+          mo_core_ham,mo_ERIs,UHF,CI_Hamiltonian)
+        if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
+        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI dipole matrices'
+        do i = 1, 3
+          dipoleMO(i) = matmul(dagger(wavefunction%MO_Coefficients),&
+            matmul(dipole(i),Wavefunction%MO_Coefficients))
+          if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)),&
+            Blank_At_Bottom=.true.)
+          call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis,determinants, &
+            dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i))
+          if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)),&
+            Blank_At_Bottom=.true.)
+          call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
+          CI_Dipole(i) = iden - CI_Dipole(i)
+          if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//&
+            trim(num2char(i)),Blank_At_Bottom=.true.)
+        endDo
+      elseIf(ci_string.eq.'noci') then
         if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building nonorthogonal CI Hamiltonian, CI overlap and CI dipole matrices'
 !       loop over pairs of Slater determinants and build transition density matrices. Get the H, N and Mu CI matrices
         call CI_Hamiltonian%init(numFile,numFile,storage='StorHerm') 
@@ -492,9 +600,9 @@
 !     Diagonalize Hamiltonian
 !
       if(iPrint.ge.1) write(iOut,'(1X,A)') 'Diagonalizing CI Hamiltonian'//NEW_LINE('A')
-      if(ci_string.eq.'orthogonal') then
+      if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
         call CI_Hamiltonian%diag(wavefunction%pscf_energies,wavefunction%pscf_amplitudes)
-      elseIf(ci_string.eq.'nonorthogonal') then
+      elseIf(ci_string.eq.'noci') then
         call CI_Hamiltonian%eigensys(CI_Overlap,wavefunction%pscf_energies,wavefunction%pscf_amplitudes)
       endIf
 
@@ -505,21 +613,27 @@
 !
       do i = 1, 3
         if(iPrint.eq.1) write(iOut,'(1X,A)') 'Diagonalizing SD dipole axis '//trim(num2char(i))//NEW_LINE('A')
-        if (ci_string.eq.'orthogonal') then
+        if (ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
           call CI_Dipole(i)%diag(dipole_eigvals(i),dipole_eigvecs(i))
-        elseIf(ci_string.eq.'nonorthogonal') then
+        elseIf(ci_string.eq.'noci') then
           call CI_Dipole(i)%eigensys(CI_Overlap,dipole_eigvals(i),dipole_eigvecs(i))
         endIf
         if(iPrint.ge.4) call dipole_eigvecs(i)%print(iOut,'CI Dipole Eigenvectors axis '//trim(num2char(i)),&
           Blank_At_Bottom=.true.)
         if(iprint.ge.3) call dipole_eigvals(i)%print(iOut,'CI Dipole Eigenvalues axis '//trim(num2char(i)),&
           Blank_At_Bottom=.true.)
-        if (ci_string.eq.'orthogonal') then
+        if (ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
           Xmat(i) = matmul(dagger(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
           invXmat(i) = dagger(Xmat(i))
-        elseIf(ci_string.eq.'nonorthogonal') then
+          if(iPrint.ge.2) call mqc_print(matmul(matmul(dagger(wavefunction%pscf_amplitudes),CI_Dipole(i)),&
+            wavefunction%pscf_amplitudes),6,'State basis dipoles and transition dipoles on axis '//trim(num2char(i)),&
+            Blank_At_Bottom=.true.)
+        elseIf(ci_string.eq.'noci') then
           Xmat(i) = matmul(mqc_matrix_inverse(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
           invXmat(i) = mqc_matrix_inverse(Xmat(i))
+          if(iPrint.ge.2) call mqc_print(matmul(matmul(wavefunction%pscf_amplitudes%inv(),CI_Dipole(i)),&
+            wavefunction%pscf_amplitudes),6,'State basis dipoles and transition dipoles on axis '//trim(num2char(i)),&
+            Blank_At_Bottom=.true.)
         endIf
       endDo
 !
@@ -604,7 +718,7 @@
         if(iPrint.ge.1.or.i.eq.maxsteps) call final_energy%print(6,'Energy (au)',Blank_At_Bottom=.true.,&
           FormatStr='F14.8')
 
-        if(ci_string.eq.'orthogonal') then
+        if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
           density = get_one_gamma_matrix(iOut,iPrint,wavefunction%nBasis,determinants,td_ci_coeffs,UHF,subs=isubs)
           if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'MO Density matrix',Blank_At_Bottom=.true.)
           density = matmul(matmul(wavefunction%mo_coefficients,density),dagger(wavefunction%mo_coefficients))
@@ -1594,6 +1708,283 @@
       end subroutine outputCheckFile 
 !
 !
+!     PROCEDURE orbital_swapper
+!
+!     orbital_swapper is a subroutine that parses input and swaps molecular orbitals on the input matrix files.
+!
+      subroutine orbital_swapper(alterations,mo_list)
+
+      implicit none
+
+!     input/output variables
+      type(mqc_scf_integral),dimension(:),allocatable,intent(inOut)::mo_list
+      character(len=*),intent(in)::alterations
+
+!     text parsing variables
+      integer::i,leftNum,rightNum,solutionNum
+      character(len=:),allocatable::alterString
+      logical::lNum,rNum,lSet,rSet,betaPair,newSoln,hasNum
+      character(len=80)::processString
+
+      alterString = trim(alterations)
+      if(len(alterString).ne.0) then
+        !  Initialize orbital swap variables
+        leftNum = 0
+        rightNum = 0
+        !  Flags for determining current state of the string processing.  lNum and rNum
+        !  indicate whether the orbital pair is being assembled, lSet and rSet inidicate
+        !  whether the left and right orbital numbers have been processed and stored.
+        !  processString contains the characters that are being examined.
+        lNum = .false.
+        rNum = .false.
+        lSet = .false.
+        rSet = .false.
+        betaPair = .false.
+        newSoln = .false.
+        hasNum = .false.
+        processString = ''
+        solutionNum = 1
+
+        do i = 1, len(alterString)
+          select case(alterString(i:i))
+          case('[')
+            if(i.eq.1) then
+              lNum = .true.
+              cycle
+            else
+              call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
+            endif
+          case("0":"9")
+            if(i.lt.len(alterString)) then
+              processString = trim(processString)//alterString(i:i)
+              if(.not.hasNum) hasNum = .true.
+            else
+              call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
+            endif
+          case("a")
+            if(lNum.and.hasNum) then
+              read(processString,'(I3)') leftNum
+              processString = ''
+              betaPair = .false.
+              hasNum = .false.
+              lSet = .true.
+              lNum = .false.
+              rNum = .true.
+            else
+              call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
+            end if
+          case("b")
+            if(lNum.and.hasNum) then
+              read(processString,'(I3)') leftNum
+              processString = ''
+              betaPair = .true.
+              hasNum = .false.
+              lSet = .true.
+              lNum = .false.
+              rNum=.true.
+            else
+              call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
+            end if
+          case(",")
+            if((lSet.and.rNum).and.hasNum) then
+              read(processString,'(I3)') rightNum
+              processString = ''
+              hasNum = .false.
+              rNum = .false.
+              rSet = .true.
+              lNum = .true.
+            else
+              call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
+            end if
+          case(":")
+            if((lSet.and.rNum).and.hasNum) then
+              read(processString,'(I3)') rightNum
+              processString = ''
+              hasNum = .false.
+              lNum = .true.
+              rNum = .false.
+              rSet = .true.
+              newSoln = .true.
+            else if((.not.lSet.and..not.rSet.and.lNum).and..not.(hasNum)) then
+              newSoln = .true.
+            else
+              call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
+            end if
+          case("]")
+            if(rNum.and.hasNum) then
+              read(processString,'(I3)') rightNum
+              rNum = .false.
+              rSet = .true.
+            else if(.not.(alterString(i-1:i-1).eq.':')) then
+              call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
+            end if
+          case default
+            call mqc_error("Unrecognized character in alteration string input:  "//alterString(i:i))
+          end select
+
+          if(lSet.and.rSet) then
+            if(.not.betaPair) then
+              mo_list(solutionNum) = mo_list(solutionNum)%swap([leftNum,rightNum])
+            else
+              mo_list(solutionNum) = mo_list(solutionNum)%swap(betaOrbsIn=[leftNum,rightNum])
+            endIf
+            rSet = .false.
+            lSet = .false.
+          end if
+          if(newSoln) then
+            solutionNum = solutionNum + 1
+            if(solutionNum.gt.size(mo_list)) call mqc_error_i('Orbital alterations requested on &
+              &more determinants than available',6,'SolutionNum',SolutionNum,'size(mo_list)',&
+              size(mo_list))
+            newSoln = .false.
+          end if
+        end do
+      end if
+
+      end subroutine orbital_swapper
+!    
+!
+!     PROCEDURE parse_active_space
+!
+!     parse_active_space is a subroutine that parses input for complete active space determinant 
+!     expansions.
+!
+      subroutine parse_active_space(active_space,numFile,nBasis,nAlpha,nBeta,nElec,activeList,&
+        inactiveList,alphaList,betaList)
+
+      implicit none
+
+!     input/output variables
+      character(len=*),intent(in)::active_space
+      integer,intent(in)::numFile
+      type(mqc_scalar),intent(in)::nBasis,nElec,nAlpha,nBeta
+      integer,dimension(:),allocatable,intent(out)::inactiveList,activeList,alphaList,betaList
+
+!     text parsing variables
+      integer::i,occNum,elecNum,solutionNum,maxActive
+      character(len=:),allocatable::activeString
+      logical::occSet,elecSet,oNum,eNum
+      character(len=80)::processString
+!
+!     parse active space information
+!
+      allocate(inactiveList(numFile))
+      allocate(activeList(numFile))
+      allocate(alphaList(numFile))
+      allocate(betaList(numFile))
+      activeString = trim(active_space)
+      if(len(activeString).eq.0) then
+        do i = 1, numFile
+          activeList(i) = nBasis
+          inactiveList(i) = 0
+          alphaList(i) = nAlpha
+          betaList(i) = nBeta
+          write(6,'(A)') ' Defaulting to substitutions over all orbitals in solution '//trim(num2char(i))
+        endDo
+      else
+        !  Initialize occupied orbitals and electron count to zero
+        occNum = 0
+        elecNum = 0
+        !  Flags for determining current state of the string processing.  oNum
+        !  and eNum indicate whether the occupied orbital or active electron
+        !  number for solution 'n' is currently being assembled.  occSet and
+        !  elecSet indicate whether the occupied orbital number or active
+        !  electron number have been fully assembled and stored.  processString
+        !  contains the characters that correspond to occNum or elecNum.
+        oNum = .false.
+        eNum = .false.
+        occSet = .false.
+        elecSet = .false.
+        processString = ''
+        solutionNum = 1
+        do i = 1, len(activeString)
+          select case(activeString(i:i))
+          case('[')
+            if(i.eq.1) then
+              oNum = .true.
+              cycle
+            else
+              call mqc_error("Malformed active space string.  Expected format:  [#,#:#,#:...]")
+            end if
+          case("0":"9")
+            if(i.lt.len(activeString)) then
+              processString = trim(processString)//activeString(i:i)
+            else
+              call mqc_error("Malformed active space string.  Expected format:  [#,#:#,#:...]")
+            endif
+          case(",")
+            if(.not.oNum) then
+              call mqc_error("Malformed active space string.  Expected format:  [#,#:#,#:...]")
+            else
+              read(processString,'(I3)') occNum
+              processString = ''
+              occSet = .true.
+              oNum = .false.
+              eNum = .true.
+            end if
+          case("]")
+            if(.not.eNum) then
+              call mqc_error("Malformed active space string.  Expected format:  [#,#:#,#:...]")
+            else
+              read(processString,'(I3)') elecNum
+              elecSet = .true.
+              eNum = .false.
+            end if
+          case(":")
+            if(occSet.and.eNum.and.(.not.elecSet)) then
+              read(processString,'(I3)') elecNum
+              elecSet = .true.
+              oNum = .true.
+              eNum = .false.
+            else
+              call mqc_error("Malformed active space string.  Expected format:  [#,#:#,#:...]")
+            end if
+          case default
+            call mqc_error("Unrecognized character in active space input:  "//activeString(i:i))
+          end select
+
+          !  Algorithm has identified a valid pair of numbers for processing.
+          if(occSet.and.elecSet) then
+
+            maxActive = nBasis - (nElec/2) - mod(int(nElec),2) + (elecNum / 2) + mod(elecNum,2)
+
+            !  Check users requested orbitals or electrons are sensible
+            !  actually exist in the SCF results. I would hope that's not something
+            !  the user would forget to check, but I'll err on the side of caution
+            if(elecNum.gt.nElec) then
+              call mqc_error("User has requested more active electrons than exist for solution "//&
+                num2char(solutionNum))
+            else if(occNum.gt.nBasis) then
+              call mqc_error("User has requested more active orbitals than exist for solution "//&
+                num2char(solutionNum))
+            else if(occNum.gt.maxActive) then
+              call mqc_error("User has requested too many active orbitals for solution "//&
+                num2char(solutionNum))
+            end if
+   
+            activeList(solutionNum) = occNum
+            inactiveList(solutionNum) = (nelec-elecNum)/2 + mod(int(nelec-elecNum),2)
+            alphaList(solutionNum) = nAlpha - inactiveList(solutionNum)
+            betaList(solutionNum) = nBeta - inactiveList(solutionNum)
+   
+            occSet = .false.
+            elecSet = .false.
+            oNum = .true.
+            eNum = .false.
+            processString = ''
+            solutionNum = solutionNum + 1
+   
+          end if
+          if((solutionNum-1).gt.numFile) call mqc_error_i('Active space specifies more input solutions than&
+            & present',6,'solutionNum',solutionNum-1,'numFile',numFile)
+        end do
+        if((solutionNum-1).lt.numFile) call mqc_error_i('Active space specifies fewer input solutions than&
+          & present',6,'solutionNum',solutionNum-1,'numFile',numFile)
+      end if
+
+      end subroutine parse_active_space
+!    
+!
 !*    NOTES
 !*      Compilation of this program requires the MQC library (https://github.com/MQCPack/mqcPack)
 !*      and the gauopen utility (http://gaussian.com/g16/gauopen.zip) and compilation with the
@@ -1613,7 +2004,7 @@
 !*      Lee M. Thompson, University of Louisville, lee.thompson.1@lousiville.edu
 !*
 !*    COPYRIGHT
-!*      (c) 2021-2020 by Lee M. Thompson distributed under terms of the MIT license.
+!*      (c) 2021 by Lee M. Thompson distributed under terms of the MIT license.
 !*
 !****
 !

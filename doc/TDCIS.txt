@@ -6,13 +6,16 @@ SYNOPSIS
       Propagates a truncated configuration interaction wavefunction in time
       using specified initial conditions.
 USAGE
-      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--sub-levels substitutions] 
-        [--ci-type type_string] [--direct] [--gauss-exe gaussian_executable_string] 
-        [--do-proc-mem] [--mem mem] [--ncpu ncpu] [--keep-inters] [--intial-state weight_vector] 
-        [--pulse-shape pulse] [--field-vector field_vector] [--field-size magnitude] [--t0 time] 
-        [--omega frequency] [--sigma width] [--beta shift] [--tcf-start time] 
-        [--time-step time_step] [--simulation-time time] [--help]
+      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--sub-levels <substitutions>] 
+        [--active-space <active_space>] [--alter <alter_list>] [--ci-type <type_string>] 
+        [--direct] [--gauss-exe <gaussian_executable_string>] [--do-proc-mem] [--mem <mem>] 
+        [--ncpu <ncpu>] [--keep-inters] [--intial-state <weight_vector>] [--pulse-shape <pulse>] 
+        [--field-vector <field_vector>] [--field-size <magnitude>] [--t0 <time>] 
+        [--omega <frequency>] [--sigma <width>] [--beta <shift>] [--tcf-start <time>] 
+        [--time-step <time_step>] [--simulation-time <time>] [--help]
 OPTIONS
+   1. Input/output
+
       -f matrix_file                   Input matrix file with initial set of molecular orbitals. 
                                        The first line contains the number of matrix files in the 
                                        input, and then on each line is a separate matrix file.
@@ -20,27 +23,70 @@ OPTIONS
       --print-level print_level        Verbosity of output. Default print level is 1. Options
                                        0-4.
 
+   2. Determinant expansion 
+
       --sub-levels substitutions       Substitution levels permitted in truncated CI calculation. 
                                        The default is all single substitutions.
 
                                        Example: [1,2] specifies single and double substitutions.
 
+      --active-space active_space      Defines orbital space in which to construct initial basis
+                                       determinant expansion through orbital swaps. For each input
+                                       solution the number of electrons and orbitals in the active
+                                       space should be specified.
+
+                                       Example: [4,4:3,6] specifies an expansion of four electrons
+                                       in four orbitals in the first input orbitals and an
+                                       expansion of three electrons in six orbitals in the second
+                                       input orbitals.
+
+      --alter alter_list               Changes the order of orbitals in the input molecular
+                                       orbitals. Alterations to each input orbitals should be
+                                       colon separated and the two orbital numbers to be swapped
+                                       should be separated by a if two alpha orbitals will be
+                                       swapped, or b if two beta orbitals will be swapped.
+                                       Different orbital swaps should be comma separated.
+
+                                       Example: [3a4,2b4:5a6] swaps alpha orbitals 3 and 4 and
+                                       beta orbitals 2 and 4 in input orbitals 1, and swaps alpha
+                                       orbitals 5 and 6 in input orbitals 2.
+
       --ci-type type_string            Specifies the type of configuration interaction. Options
                                        are:
-                                       1) orthogonal (default)
+                                       1) oci (default)
                                           Perform orthogonal configuration interaction with 
                                           determinant expansion specified by sub-levels option.
                                           Only one matrix file should be specified in the input 
                                           file is expected and additional inputs will result in 
                                           an error.
-                                       2) nonorthogonal
+                                       2) ocas
+                                          Perform orthogonal complete active space determinant 
+                                          expansion specified by active-space option. Only one 
+                                          matrix file should be specified in the input file is 
+                                          expected and additional inputs will result in an 
+                                          error.
+                                       3) noci
                                           Perform nonorthogonal configuration interaction with 
                                           determinant expansion specified by matrix files 
                                           listed in input file.
-                                       3) hybrid (not yet implemented)
-                                          Perform the orthogonal expansion specified by the sub-
-                                          levels option on each matrix file in the input file
-                                          which are generally nonorthogonal.
+                                       4) hci (not yet implemented)
+                                          Perform a hybrid configuration determinant expansion.
+                                          That is, an orthogonal truncated configuration 
+                                          interaction determinant expansion on molecular 
+                                          orbitals in each matrix file in the input file, which 
+                                          generally leads to mixed orthogonal and nonorthogonal 
+                                          determinants. Substitution levels are specified by 
+                                          sub-levels option.
+                                       5) hcas (not yet implemented)
+                                          Perform a hybrid complete active space determinant 
+                                          expansion. That is, an orthogonal complete active 
+                                          space determinant expansion on molecular orbitals in 
+                                          each matrix file in the input file, which generally 
+                                          leads to mixed orthogonal and nonorthogonal 
+                                          determinants. Active spaces are specified by active-
+                                          space option.
+
+   3. Hamiltonian matrix construction
 
       --direct                         Avoid the use of 2ERIs in nonorthogonal code. Gaussian 
                                        is required if requested.
@@ -63,6 +109,8 @@ OPTIONS
       --keep-inters                    Do not delete intemediate files used in the calculation.
                                        Default is to delete intermediate files.
 
+   4. Initial conditions
+
       --initial-state weight_vector    Initial state for simulation. For a pure state, the  
                                        desired root can be input as a single integer. For a 
                                        mixed state, each non-zero weighted root should be 
@@ -73,6 +121,8 @@ OPTIONS
                                        Example: [1,0.5:2,0.5] specifies an initial state with 
                                        50% weight on the lowest root and 50% weight on the 
                                        fourth root.
+
+   5. Applied field 
 
       --pulse-shape pulse              Pulse shape used in simulation. Options are:
                                        1) rectangle (default)
@@ -108,6 +158,8 @@ OPTIONS
 
       --beta shift                     Chirp parameter for pulse shapes that use it (default is 3.0 au). 
 
+   6. Simulation parameters
+ 
       --tcf-start time                 Compute time correlation function starting from input time. The 
                                        Fourier transform of this function when the start time is the time 
                                        step after the delta pulse provides the absorption spectrum.
@@ -115,6 +167,10 @@ OPTIONS
       --time-step time_step            Time step for simulation in au (default 0.1 au = 2.42 as).
 
       --simulation-time time           Total simulation time in au (default is 100.0 au = 2.42 fs).
+
+      --save steps                     Save the density to a matrix file each time the specified interval
+                                       of steps is reached, starting with the first step. A value of zero
+                                       (default) means that no densities are saved.
 
       --help                           Output help documentation to terminal.
 
@@ -136,6 +192,6 @@ NOTES
     AUTHORS
       Lee M. Thompson, University of Louisville, lee.thompson.1@lousiville.edu
 COPYRIGHT
-      (c) 2021-2020 by Lee M. Thompson distributed under terms of the MIT license.
+      (c) 2021 by Lee M. Thompson distributed under terms of the MIT license.
 
 ---------------------------------------------------------------------------
