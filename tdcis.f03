@@ -625,9 +625,15 @@
         if (ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
           Xmat(i) = matmul(dagger(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
           invXmat(i) = dagger(Xmat(i))
+          if(iPrint.ge.2) call mqc_print(matmul(matmul(dagger(wavefunction%pscf_amplitudes),CI_Dipole(i)),&
+            wavefunction%pscf_amplitudes),6,'State basis dipoles and transition dipoles on axis '//trim(num2char(i)),&
+            Blank_At_Bottom=.true.)
         elseIf(ci_string.eq.'noci') then
           Xmat(i) = matmul(mqc_matrix_inverse(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
           invXmat(i) = mqc_matrix_inverse(Xmat(i))
+          if(iPrint.ge.2) call mqc_print(matmul(matmul(wavefunction%pscf_amplitudes%inv(),CI_Dipole(i)),&
+            wavefunction%pscf_amplitudes),6,'State basis dipoles and transition dipoles on axis '//trim(num2char(i)),&
+            Blank_At_Bottom=.true.)
         endIf
       endDo
 !
