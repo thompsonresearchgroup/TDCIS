@@ -1634,7 +1634,8 @@
       do i = 1, numFile
         do j = 1, i
           call get_rhos(rho,nIJ,pnIJ,nullSize,mo_list(i),mo_list(j),overlap,nBasis,nAlpha,nBeta)
-          weight = conjg(eigenvecs%at(i))*pnIJ*eigenvecs%at(j)
+          if(nullSize.ge.2) cycle
+          weight = eigenvecs%at(i)*pnIJ*conjg(eigenvecs%at(j))
           oneDMmat = oneDMmat + weight*rho(2)%getBlock('full')
           if(i.ne.j) oneDMmat = oneDMmat + conjg(weight)*dagger(rho(2)%getBlock('full'))
         endDo
