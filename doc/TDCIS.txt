@@ -30,6 +30,9 @@ OPTIONS
 
                                        Example: [1,2] specifies single and double substitutions.
 
+      --core-orbitals core-orbitals    Number of orbitals to exclude from the truncated CI 
+                                       determinant expansion.
+
       --active-space active_space      Defines orbital space in which to construct initial basis
                                        determinant expansion through orbital swaps. For each input
                                        solution the number of electrons and orbitals in the active
