@@ -7,6 +7,7 @@ SYNOPSIS
       using specified initial conditions.
 USAGE
       TDCIS [-f <matrix_file>] [--print-level <print_level>] [--sub-levels <substitutions>] 
+        [--core-orbitals <core-orbitals>] [--virt-orbitals <virt-orbitals>] 
         [--active-space <active_space>] [--alter <alter_list>] [--ci-type <type_string>] 
         [--direct] [--gauss-exe <gaussian_executable_string>] [--do-proc-mem] [--mem <mem>] 
         [--ncpu <ncpu>] [--keep-inters] [--intial-state <weight_vector>] [--pulse-shape <pulse>] 
@@ -30,8 +31,11 @@ OPTIONS
 
                                        Example: [1,2] specifies single and double substitutions.
 
-      --core-orbitals core-orbitals    Number of orbitals to exclude from the truncated CI 
-                                       determinant expansion.
+      --core-orbitals core-orbitals    Number of occupied orbitals to exclude from the truncated 
+                                       CI determinant expansion.
+
+      --virt-orbitals virt-orbitals    Number of virtual orbitals to exclude from the truncated 
+                                       CI determinant expansion.
 
       --active-space active_space      Defines orbital space in which to construct initial basis
                                        determinant expansion through orbital swaps. For each input

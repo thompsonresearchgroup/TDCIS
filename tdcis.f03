@@ -23,7 +23,7 @@
         pulseShape='rectangle',tcf_file='tcf',file_tmp,ci_string='oci',gauss_exe='$g16root/g16/g16',&
         mem='8GB',ncpu='2',alterations='',activeSpace=''
       integer(kind=int64)::iOut=6,iPrint=1,iUnit,i,j,k,maxsteps,flag,stat_num,numFile=0,nullSize,saveDen=0,&
-        nCore=0
+        nCore=0,nVirt=0
       integer(kind=int64),dimension(:),allocatable::isubs,inactiveList,activeList,alphaList,betaList
       real(kind=real64)::delta_t=0.1,field_size=0.005,simTime=100.0,t0=0.0,sigma=0.5,omega=10.0,&
         beta=3.0
@@ -51,6 +51,7 @@
 !
 !*    USAGE
 !*      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--sub-levels <substitutions>] 
+!*        [--core-orbitals <core-orbitals>] [--virt-orbitals <virt-orbitals>] 
 !*        [--active-space <active_space>] [--alter <alter_list>] [--ci-type <type_string>] 
 !*        [--direct] [--gauss-exe <gaussian_executable_string>] [--do-proc-mem] [--mem <mem>] 
 !*        [--ncpu <ncpu>] [--keep-inters] [--intial-state <weight_vector>] [--pulse-shape <pulse>] 
@@ -108,11 +109,19 @@
           j = i+2
         elseIf(command.eq.'--core-orbitals') then
 !
-!*      --core-orbitals core-orbitals    Number of orbitals to exclude from the truncated CI 
-!*                                       determinant expansion.
+!*      --core-orbitals core-orbitals    Number of occupied orbitals to exclude from the truncated 
+!*                                       CI determinant expansion.
 !*
           call mqc_get_command_argument(i+1,command)
           read(command,'(I3)') nCore
+          j = i+2
+        elseIf(command.eq.'--virt-orbitals') then
+!
+!*      --virt-orbitals virt-orbitals    Number of virtual orbitals to exclude from the truncated 
+!*                                       CI determinant expansion.
+!*
+          call mqc_get_command_argument(i+1,command)
+          read(command,'(I3)') nVirt
           j = i+2
         elseIf(command.eq.'--active-space') then
 !
@@ -496,13 +505,18 @@
           write(iOut,'(1X,A)') 'Building Determinant Strings'
           call subs%print(6,'Permitted substitution levels',Blank_At_Bottom=.true.)
           write(iOut,'(1X,A,1X,I3,1X,A)') 'Excluding',nCore,'core orbitals'
+          write(iOut,'(1X,A,1X,I3,1X,A)') 'Excluding',nVirt,'virtual orbitals'
         endIf
         if(nCore.gt.min(int(wavefunction%nAlpha),int(Wavefunction%nBeta))) &
           call mqc_error_i('Impossible number of core orbitals requested in truncated CI expansion',&
           6,'nCore',nCore,'wavefunction%nAlpha',int(wavefunction%nAlpha),'wavefunction%nBeta',&
-          int(wavefunction%nAlpha))
+          int(wavefunction%nBeta))
+        if(nVirt.gt.min(int(wavefunction%nBasis-wavefunction%nAlpha),int(wavefunction%nBasis-Wavefunction%nBeta))) &
+          call mqc_error_i('Impossible number of virtual orbitals excluded from truncated CI expansion',&
+          6,'nVirt',nVirt,'wwavefunction%nBasis-avefunction%nAlpha',int(wavefunction%nBasis-wavefunction%nAlpha),&
+          'wavefunction%nBasis-wavefunction%nBeta',int(wavefunction%nBasis-wavefunction%nBeta))
         isubs = [(i, i=1,int(maxval(subs)))]
-        call trci_dets_string(iOut,iPrint,wavefunction%nBasis-nCore,wavefunction%nAlpha-nCore, &
+        call trci_dets_string(iOut,iPrint,wavefunction%nBasis-nCore-nVirt,wavefunction%nAlpha-nCore, &
           Wavefunction%nBeta-nCore,isubs,determinants,nCore)
       elseIf(ci_string.eq.'ocas') then
         call parse_active_space(activeSpace,numFile,wavefunction%nBasis,wavefunction%nAlpha,&
