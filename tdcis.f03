@@ -529,6 +529,8 @@
           call mqc_print(6,betaList,'Active beta electrons')
         endIf
         call gen_det_str(iOut,iPrint,activeList(1),alphaList(1),betaList(1),determinants,inactiveList(1))
+        nCore = inactiveList(1)
+        nVirt = wavefunction%nBasis-nCore-activeList(1)
       endIf
 !
 !     Transform one and two-electron integrals to MO basis (only if performing orthogonal CI).
@@ -554,7 +556,7 @@
         if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
         call subs%unshift(0)
         isubs = subs
-        call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis,determinants, &
+        call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
           mo_core_ham,mo_ERIs,UHF,CI_Hamiltonian,isubs)
         if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
         if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI dipole matrices'
@@ -563,7 +565,7 @@
             matmul(dipole(i),Wavefunction%MO_Coefficients))
           if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)),&
             Blank_At_Bottom=.true.)
-          call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis,determinants, &
+          call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
             dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i),subs=isubs)
           if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)),&
             Blank_At_Bottom=.true.)
@@ -574,7 +576,7 @@
         endDo
       elseIf(ci_string.eq.'ocas') then
         if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
-        call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis,determinants, &
+        call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
           mo_core_ham,mo_ERIs,UHF,CI_Hamiltonian)
         if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
         if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI dipole matrices'
@@ -583,7 +585,7 @@
             matmul(dipole(i),Wavefunction%MO_Coefficients))
           if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)),&
             Blank_At_Bottom=.true.)
-          call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis,determinants, &
+          call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
             dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i))
           if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)),&
             Blank_At_Bottom=.true.)
@@ -747,7 +749,8 @@
           FormatStr='F14.8')
 
         if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
-          density = get_one_gamma_matrix(iOut,iPrint,wavefunction%nBasis,determinants,td_ci_coeffs,UHF,subs=isubs)
+          density = get_one_gamma_matrix(iOut,iPrint,wavefunction%nBasis-nVirt,determinants,td_ci_coeffs,UHF,&
+            nOrbsIn=int(wavefunction%nBasis),subs=isubs)
           if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'MO Density matrix',Blank_At_Bottom=.true.)
           density = matmul(matmul(wavefunction%mo_coefficients,density),dagger(wavefunction%mo_coefficients))
           if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'AO Density matrix',Blank_At_Bottom=.true.)
