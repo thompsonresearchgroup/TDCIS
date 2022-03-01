@@ -29,7 +29,8 @@
         beta=3.0
       real(kind=real64),allocatable::tcf_start
       complex(kind=real64)::imag=(0.0,1.0)
-      logical::UHF,file_exists,doDirect=.false.,found,doProcMem=.false.,keep_intermediate_files=.false.
+      logical::UHF,file_exists,doVelDip=.false.,doDirect=.false.,found,doProcMem=.false.,&
+        keep_intermediate_files=.false.
       type(mqc_pscf_wavefunction)::wavefunction
       type(mqc_molecule_data)::moleculeInfo
       type(mqc_twoERIs),dimension(:),allocatable::eris
@@ -38,13 +39,13 @@
       type(mqc_determinant)::determinants
       type(mqc_scf_integral)::mo_core_ham,density
       type(mqc_scf_integral),dimension(2)::rho
-      type(mqc_scf_integral),dimension(3)::dipole,dipoleMO
+      type(mqc_scf_integral),dimension(3)::dipole,dipoleMO,veldipole
       type(mqc_scf_integral),dimension(:),allocatable::mo_list
       type(mqc_matrix)::CI_Hamiltonian,exp_CI_Hamiltonian,CI_Overlap,iden,sh2AtMp,shlTyp,nPrmSh,prmExp,&
         conCoef,conCoTwo,shCoor
       type(mqc_matrix),dimension(3)::CI_Dipole,dipole_eigvecs,Xmat,invXmat
       type(mqc_vector)::subs,nuclear_dipole,total_dipole,state_coeffs,td_ci_coeffs,field_vector,&
-        td_field_vector,tcf_ci_epsilon,tcf
+        td_field_vector,tcf_ci_epsilon,tcf,total_veldip
       type(mqc_vector),dimension(3)::dipole_eigvals
       type(mqc_vector),dimension(2)::nRoot
       real(kind=real64),parameter::zero_thresh=1.00E-8
@@ -94,6 +95,13 @@
           call mqc_get_command_argument(i+1,command)
           read(command,'(I1)') iPrint
           j = i + 2
+        elseif(command.eq.'--print-veldip') then
+!
+!*      --print-veldip                   Compute and print the velocity gauge dipole along with the
+!*                                       length gauge dipole.
+!*
+          doVelDip=.true.
+          j = i + 1
 !
 !*   2. Determinant expansion 
 !*
@@ -436,6 +444,14 @@
       if(iPrint.ge.4) call dipole(2)%print(6,'AO dipole y integrals')
       call fileInfo%getESTObj('dipole z',est_integral=dipole(3))
       if(iPrint.ge.4) call dipole(3)%print(6,'AO dipole z integrals')
+      if(doVelDip) then
+        call fileInfo%getESTObj('vel dipole x',est_integral=veldipole(1))
+        if(iPrint.ge.4) call veldipole(1)%print(6,'AO velocity dipole x integrals')
+        call fileInfo%getESTObj('vel dipole y',est_integral=veldipole(2))
+        if(iPrint.ge.4) call veldipole(2)%print(6,'AO velocity dipole y integrals')
+        call fileInfo%getESTObj('vel dipole z',est_integral=veldipole(3))
+        if(iPrint.ge.4) call veldipole(3)%print(6,'AO velocity dipole z integrals')
+      endIf
 !
       if(.not.doDirect) then
         if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
@@ -549,6 +565,7 @@
         transpose(moleculeInfo%Cartesian_Coordinates))
       if(iPrint.ge.1) call nuclear_dipole%print(6,'Nuclear dipole',Blank_At_Bottom=.true.)
       call total_dipole%init(3)
+      if(doVelDip) call total_veldip%init(3)
 !
 !     Generate field-free Hamiltonian matrix and dipole matrices (in length form) in CI basis.
 !
@@ -764,8 +781,10 @@
         endIf
         do j = 1, 3
           call total_dipole%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
+          if(doVelDip) call total_veldip%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
         endDo
         call total_dipole%print(6,'Total dipole',Blank_At_Bottom=.true.)
+        if(doVelDip) call total_veldip%print(6,'Total velocity gauge dipole',Blank_At_Bottom=.true.)
 
         if(abs(saveDen).gt.0) then
           if(mod(i,abs(saveDen)).eq.0) call outputCheckFile(fileInfo,'MO-matrix-'//trim(num2char(i)),&
