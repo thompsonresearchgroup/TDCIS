@@ -26,7 +26,7 @@
         nCore=0,nVirt=0
       integer(kind=int64),dimension(:),allocatable::isubs,inactiveList,activeList,alphaList,betaList
       real(kind=real64)::delta_t=0.1,field_size=0.005,simTime=100.0,t0=0.0,sigma=0.5,omega=10.0,&
-        beta=3.0
+        beta=0.05
       real(kind=real64),allocatable::tcf_start
       complex(kind=real64)::imag=(0.0,1.0)
       logical::UHF,file_exists,doVelDip=.false.,doDirect=.false.,found,doProcMem=.false.,&
@@ -35,9 +35,9 @@
       type(mqc_molecule_data)::moleculeInfo
       type(mqc_twoERIs),dimension(:),allocatable::eris
       type(mqc_twoERIs)::mo_ERIs
-      type(mqc_scalar)::Vnn,final_energy,nIJ,pnIJ,hij,dij
+      type(mqc_scalar)::Vnn,final_energy,nIJ,pnIJ,hij,dij,dip,vdip
       type(mqc_determinant)::determinants
-      type(mqc_scf_integral)::mo_core_ham,density
+      type(mqc_scf_integral)::mo_core_ham,density,density_AO
       type(mqc_scf_integral),dimension(2)::rho
       type(mqc_scf_integral),dimension(3)::dipole,dipoleMO,veldipole
       type(mqc_scf_integral),dimension(:),allocatable::mo_list
@@ -286,7 +286,7 @@
 !*                                          E(t) = E(0)*sin(w(t-t0))*H(t-t0)
 !*                                       4) transform limited
 !*                                          E(t) = E(0)*exp(-(t-t0)^2/2*sigma^2)*sin(omega*(t-t0))
-!*                                       5) chirped pulse
+!*                                       5) chirped
 !*                                          E(t) = E(0)*exp(-(t-t0)^2/2*sigma^2)*
 !*                                                   sin((omega+beta(t-t0))*(t-t0))
 !*
@@ -343,6 +343,14 @@
 !*
           call mqc_get_command_argument(i+1,command)
           read(command,'(F12.6)') sigma
+          j = i + 2
+!          
+!       --beta-value beta                Chirp parameter 2 for pulse shapes that use it (default is 0.05 au)                       
+!       
+!          
+        elseif(command.eq.'--beta-value') then 
+          call mqc_get_command_argument(i+1,command)
+          read(command,'(F12.6)') beta
           j = i + 2
 !
 !*   6. Simulation parameters
@@ -446,11 +454,11 @@
       if(iPrint.ge.4) call dipole(3)%print(6,'AO dipole z integrals')
       if(doVelDip) then
         call fileInfo%getESTObj('vel dipole x',est_integral=veldipole(1))
-        if(iPrint.ge.4) call veldipole(1)%print(6,'AO velocity dipole x integrals')
+        if(iPrint.ge.0) call veldipole(1)%print(6,'AO velocity dipole x integrals')
         call fileInfo%getESTObj('vel dipole y',est_integral=veldipole(2))
-        if(iPrint.ge.4) call veldipole(2)%print(6,'AO velocity dipole y integrals')
+        if(iPrint.ge.0) call veldipole(2)%print(6,'AO velocity dipole y integrals')
         call fileInfo%getESTObj('vel dipole z',est_integral=veldipole(3))
-        if(iPrint.ge.4) call veldipole(3)%print(6,'AO velocity dipole z integrals')
+        if(iPrint.ge.0) call veldipole(3)%print(6,'AO velocity dipole z integrals')
       endIf
 !
       if(.not.doDirect) then
@@ -563,7 +571,7 @@
 !
       nuclear_dipole = matmul(transpose(moleculeInfo%Nuclear_Charges),&
         transpose(moleculeInfo%Cartesian_Coordinates))
-      if(iPrint.ge.1) call nuclear_dipole%print(6,'Nuclear dipole',Blank_At_Bottom=.true.)
+      if(iPrint.ge.0) call nuclear_dipole%print(6,'Nuclear dipole',Blank_At_Bottom=.true.)
       call total_dipole%init(3)
       if(doVelDip) call total_veldip%init(3)
 !
@@ -676,8 +684,8 @@
             wavefunction%pscf_amplitudes),6,'State basis dipoles and transition dipoles on axis '//trim(num2char(i)),&
             Blank_At_Bottom=.true.)
         elseIf(ci_string.eq.'noci') then
-          Xmat(i) = matmul(mqc_matrix_inverse(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
-          invXmat(i) = mqc_matrix_inverse(Xmat(i))
+            Xmat(i) = matmul(mqc_matrix_inverse(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
+            invXmat(i) = mqc_matrix_inverse(Xmat(i))
           if(iPrint.ge.2) call mqc_print(matmul(matmul(wavefunction%pscf_amplitudes%inv(),CI_Dipole(i)),&
             wavefunction%pscf_amplitudes),6,'State basis dipoles and transition dipoles on axis '//trim(num2char(i)),&
             Blank_At_Bottom=.true.)
@@ -781,7 +789,7 @@
         endIf
         do j = 1, 3
           call total_dipole%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
-          if(doVelDip) call total_veldip%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
+          if(doVelDip) call total_veldip%put((-1)*contraction(density,veldipole(j)) + nuclear_dipole%at(j),j)
         endDo
         call total_dipole%print(6,'Total dipole',Blank_At_Bottom=.true.)
         if(doVelDip) call total_veldip%print(6,'Total velocity gauge dipole',Blank_At_Bottom=.true.)
@@ -869,11 +877,11 @@
         else
           td_field = [0.0,0.0,0.0]
         endIf
-      case('transform limited')
-        td_field = static_field*exp((-(dt*step-t0)**2)/(2*sigma**2))*&
+      case('transform')
+        td_field = static_field*exp(-(((dt*step-t0)**2)/(2*sigma**2)))*&
           sin(omega*(dt*step-t0))
-      case('chirped pulse')
-        td_field = static_field*exp((-(dt*step-t0)**2)/(2*sigma**2))*&
+      case('chirped')
+        td_field = static_field*exp(-(((dt*step-t0)**2)/(2*sigma**2)))*&
           sin((omega+beta*(dt*step-t0))*(dt*step-t0))
       case default
         call mqc_error_a('Unrecognized pulse shape requested',6,'pulseShape',pulseShape)
