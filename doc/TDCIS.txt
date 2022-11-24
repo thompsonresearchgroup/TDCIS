@@ -126,7 +126,7 @@ OPTIONS
                                        mixed state, each non-zero weighted root should be 
                                        included along wih the specified weight (Default is
                                        a ground state population of 1.0). Note that the input 
-                                       vector is normalized regardles of input values.
+                                       vector is normalized regardless of input values.
                                    
                                        Example: [1,0.5:2,0.5] specifies an initial state with 
                                        50% weight on the lowest root and 50% weight on the 
@@ -146,6 +146,9 @@ OPTIONS
                                        5) chirped pulse
                                           E(t) = E(0)*exp(-(t-t0)^2/2*sigma^2)*
                                                    sin((omega+beta(t-t0))*(t-t0))
+                                       6) cos squared
+                                          E(t) = E(0)*(cos((pi/(2*sigma))*(sigma-t+t0)))**2*
+                                                   sin(omega*(t-t0))*H(t-t0)*H(sigma-t)
 
       --field-vector field_vector      Field polarization vector. Should be vector of length
                                        three. The default is to orient on the z-axis. Note that

@@ -263,7 +263,7 @@
 !*                                       mixed state, each non-zero weighted root should be 
 !*                                       included along wih the specified weight (Default is
 !*                                       a ground state population of 1.0). Note that the input 
-!*                                       vector is normalized regardles of input values.
+!*                                       vector is normalized regardless of input values.
 !*                                   
 !*                                       Example: [1,0.5:2,0.5] specifies an initial state with 
 !*                                       50% weight on the lowest root and 50% weight on the 
@@ -289,6 +289,9 @@
 !*                                       5) chirped pulse
 !*                                          E(t) = E(0)*exp(-(t-t0)^2/2*sigma^2)*
 !*                                                   sin((omega+beta(t-t0))*(t-t0))
+!*                                       6) cos squared
+!*                                          E(t) = E(0)*(cos((pi/(2*sigma))*(sigma-t+t0)))**2*
+!*                                                   sin(omega*(t-t0))*H(t-t0)*H(sigma-t)
 !*
           call mqc_get_command_argument(i+1,command)
           pulseShape = command
@@ -434,6 +437,7 @@
         endIf
       endIf
 !
+!      call MQC_Gaussian_SetDEBUG(.true.)
       call fileInfo%load(fileList(1))
       call fileInfo%getMolData(moleculeInfo)
       call fileInfo%getESTObj('wavefunction',wavefunction)
@@ -452,6 +456,7 @@
         call fileInfo%getESTObj('vel dipole z',est_integral=veldipole(3))
         if(iPrint.ge.4) call veldipole(3)%print(6,'AO velocity dipole z integrals')
       endIf
+!      call MQC_Gaussian_SetDEBUG(.false.)
 !
       if(.not.doDirect) then
         if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
@@ -781,7 +786,7 @@
         endIf
         do j = 1, 3
           call total_dipole%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
-          if(doVelDip) call total_veldip%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
+          if(doVelDip) call total_veldip%put((-1)*contraction(density,veldipole(j)) + nuclear_dipole%at(j),j)
         endDo
         call total_dipole%print(6,'Total dipole',Blank_At_Bottom=.true.)
         if(doVelDip) call total_veldip%print(6,'Total velocity gauge dipole',Blank_At_Bottom=.true.)
@@ -875,6 +880,13 @@
       case('chirped pulse')
         td_field = static_field*exp((-(dt*step-t0)**2)/(2*sigma**2))*&
           sin((omega+beta*(dt*step-t0))*(dt*step-t0))
+      case('cos squared')
+        if(dt*step.ge.t0.and.dt*step.lt.t0+2*sigma) then
+          td_field = static_field*(cos((pi/(2*sigma))*(sigma-dt*step+t0)))**2*&
+            sin(omega*(dt*step-t0))
+        else
+          td_field = [0.0,0.0,0.0]
+        endIf
       case default
         call mqc_error_a('Unrecognized pulse shape requested',6,'pulseShape',pulseShape)
       end select
