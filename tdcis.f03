@@ -737,13 +737,13 @@
 !
       write(iOut,'(1X,A)') 'STARTING TIME PROPAGATION'//NEW_LINE('A')
       do i = 0, maxsteps
-        if(iPrint.ge.1) write(iOut,'(1X,A)') repeat('=',44)//NEW_LINE('A')
+        write(iOut,'(1X,A)') repeat('=',44)//NEW_LINE('A')
         if(i.eq.maxsteps) write(iOut,'(1X,A)') repeat(' ',16)//'FINAL TIME STEP'//NEW_LINE('A')//NEW_LINE('A')//&
         ' '//repeat('=',44)//NEW_LINE('A')
-        if(iPrint.ge.1) write(iOut,'(1X,A,1X,F12.6,1X,A)') 'Time step:',delta_t*i,'au'//NEW_LINE('A')
+        write(iOut,'(1X,A,1X,F12.6,1X,A)') 'Time step:',delta_t*i,'au'//NEW_LINE('A')
 
         td_field_vector = get_field_vector(delta_t,i,field_vector,pulseShape,t0,omega,sigma,beta)
-        if(iPrint.ge.1) call td_field_vector%print(6,'Applied field vector',Blank_At_Bottom=.true.)
+        call td_field_vector%print(6,'Applied field vector',Blank_At_Bottom=.true.)
 
         if(i.gt.0) then
           state_coeffs = exp((-1)*imag*delta_t*wavefunction%pscf_energies).ewp.state_coeffs
@@ -770,6 +770,8 @@
         if(iPrint.ge.1.or.i.eq.maxsteps) call final_energy%print(6,'Energy (au)',Blank_At_Bottom=.true.,&
           FormatStr='F14.8')
 
+        if(iPrint.ge.1.or.i.eq.maxsteps) call mqc_print(state_coeffs.outer.transpose(state_coeffs),6,'State Density matrix', &
+          Blank_At_Bottom=.true.)
         if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
           density = get_one_gamma_matrix(iOut,iPrint,wavefunction%nBasis-nVirt,determinants,td_ci_coeffs,UHF,&
             nOrbsIn=int(wavefunction%nBasis),subs=isubs)
@@ -1737,20 +1739,28 @@
       class(mqc_wavefunction),intent(in)::wavefunction
 !
 !     subroutine variables
-      character(len=80)::spinSymStr
+      character(len=80)::spinSymStr,compSpinStr
       
       temp_file%icgu = 111
+      compSpinStr = 'real'
       if(density%type().eq.'space') then
         spinSymStr = 'space'
-        if(MQC_Matrix_HaveComplex(density%getBlock('full'))) temp_file%icgu = temp_file%icgu + 10
+        if(MQC_Matrix_HaveComplex(density%getBlock('full'))) then
+          temp_file%icgu = temp_file%icgu + 10
+          compSpinStr = 'complex'
+        endIf
       elseIf(density%type().eq.'spin') then
         spinSymStr = 'spin'
         temp_file%icgu = temp_file%icgu + 1
-        if(MQC_Matrix_HaveComplex(density%getBlock('full'))) temp_file%icgu = temp_file%icgu + 10
+        if(MQC_Matrix_HaveComplex(density%getBlock('full'))) then
+          temp_file%icgu = temp_file%icgu + 10
+          compSpinStr = 'complex'
+        endIf
       else
         spinSymStr = 'general'
         temp_file%icgu = temp_file%icgu + 100
         temp_file%icgu = temp_file%icgu + 10
+        compSpinStr = 'complex'
       endIf
       call temp_file%create(trim(fileName)//'.mat')
       call temp_file%writeArray('SHELL TO ATOM MAP',sh2AtMp)
@@ -1760,13 +1770,17 @@
       call temp_file%writeArray('CONTRACTION COEFFICIENTS',conCoef)
       call temp_file%writeArray('P(S=P) CONTRACTION COEFFICIENTS',conCoTwo)
       call temp_file%writeArray('COORDINATES OF EACH SHELL',shCoor)
-      call temp_file%writeESTObj('density',est_integral=density,override=spinSymStr)
-      call temp_file%writeESTObj('scf density',est_integral=wavefunction%scf_density_matrix,override=spinSymStr)
-      call temp_file%writeESTObj('mo coefficients',est_integral=wavefunction%mo_coefficients,override=spinSymStr)
       call temp_file%writeESTObj('mo energies',est_eigenvalues=wavefunction%mo_energies,override=spinSymStr)
+      call temp_file%writeESTObj('mo coefficients',est_integral=wavefunction%mo_coefficients,&
+        override=spinSymStr,imagORide=compSpinStr)
+      call temp_file%writeESTObj('density',est_integral=density,override=spinSymStr,imagORide=compSpinStr)
+      call temp_file%writeESTObj('scf density',est_integral=wavefunction%scf_density_matrix,override=spinSymStr,&
+        imagORide=compSpinStr)
       call Close_MatF(temp_file%UnitNumber)
 
-      call execute_command_line("unfchk -matrix "//trim(fileName)//".mat "//trim(fileName)//".chk")
+      call execute_command_line("/Volumes/CaseSensitive/gauss/unfchk -matrix "//trim(fileName)//".mat "//trim(fileName)//".chk")
+      call execute_command_line("formchk "//trim(fileName)//".chk")
+      call execute_command_line("cubegen 1 density=scf "//trim(fileName)//".fchk "//trim(fileName)//".cube -3 h")
 
       end subroutine outputCheckFile 
 !
