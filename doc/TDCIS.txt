@@ -6,14 +6,16 @@ SYNOPSIS
       Propagates a truncated configuration interaction wavefunction in time
       using specified initial conditions.
 USAGE
-      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--sub-levels <substitutions>] 
-        [--core-orbitals <core-orbitals>] [--virt-orbitals <virt-orbitals>] 
-        [--active-space <active_space>] [--alter <alter_list>] [--ci-type <type_string>] 
-        [--direct] [--gauss-exe <gaussian_executable_string>] [--do-proc-mem] [--mem <mem>] 
-        [--ncpu <ncpu>] [--keep-inters] [--intial-state <weight_vector>] [--pulse-shape <pulse>] 
-        [--field-vector <field_vector>] [--field-size <magnitude>] [--t0 <time>] 
-        [--omega <frequency>] [--sigma <width>] [--beta <shift>] [--tcf-start <time>] 
-        [--time-step <time_step>] [--simulation-time <time>] [--help]
+      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--print-veldip] 
+        [--sub-levels <substitutions>] [--core-orbitals <core-orbitals>] 
+        [--virt-orbitals <virt-orbitals>] [--active-space <active_space>] [--alter <alter_list>] 
+        [--ci-type <type_string>] [--direct] [--gauss-exe <gaussian_executable_string>] 
+        [--do-proc-mem] [--mem <mem>] [--ncpu <ncpu>] [--keep-inters] 
+        [--intial-state <weight_vector>] [--pulse-shape <pulse>] [--field-vector <field_vector>] 
+        [--field-size <magnitude>] [--t0 <time>] [--omega <frequency>] [--sigma <width>] 
+        [--beta <shift>] [--tcf-start <time>] [--time-step <time_step>] [--simulation-time <time>] 
+        [--save <steps>] [--nuclear-step <update_file>] [--nuclear-time <time>] 
+        [--nuclear_start <time>] [--maxNucSteps <steps>] [--nuclear-update <method>] [--help]
 OPTIONS
    1. Input/output
 
@@ -184,6 +186,35 @@ OPTIONS
       --save steps                     Save the density to a matrix file each time the specified interval
                                        of steps is reached, starting with the first step. A value of zero
                                        (default) means that no densities are saved.
+
+   7. Nuclear potential 
+
+      --nuclear-step file_name         File giving increment to nuclear coordinates and nuclear charge for
+                                       each step in the nuclear potential. 
+
+                                       WARNING! The current implementation overwrites the input matrix files.
+
+      --nuclear-time nuclear_time      Time step for each change in nuclear geometry in au (default is equal
+                                       to simulation time so no nuclear step is taken).
+
+      --nuclear-start nuclear_start    Time at which to start the nuclear steps so the first step is taken
+                                       at nuclear_start+nuclear_time. Default is 0.0 au.
+
+      --maxNucSteps nuclear_steps      Maximum number of nuclear steps. Can be used to specify the number of
+                                       times the nuclear increment is applied.
+
+      --nuclear-update nuclear_update  Method for updating the state weights after a nuclear step. Options 
+                                       are:
+                                       1) sudden (default)
+                                          Reweight eigenstates so that wavefunction is the same after the 
+                                          nuclear step, i.e. the wavefunction does not have time to respond
+                                          to the perturbation.
+                                       2) adiabatic
+                                          Keep eigenstate weights the same after the nuclear step, i.e. the
+                                          perturbation is slow enough that the wavefunction adapts to stay 
+                                          in the same state.
+
+   8. Help 
 
       --help                           Output help documentation to terminal.
 

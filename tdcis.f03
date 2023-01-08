@@ -17,17 +17,21 @@
 !
       implicit none
       type(mqc_gaussian_unformatted_matrix_file)::fileInfo 
-      character(len=:),allocatable::command,fileName,help_path
+      character(len=:),allocatable::command,fileName,help_path,nucFile
       character(len=256),dimension(:),allocatable::fileList
       character(len=256)::vecString,root_string='',sub_string='',field_string='',&
         pulseShape='rectangle',tcf_file='tcf',file_tmp,ci_string='oci',gauss_exe='$g16root/g16/g16',&
-        mem='8GB',ncpu='2',alterations='',activeSpace=''
-      integer(kind=int64)::iOut=6,iPrint=1,iUnit,i,j,k,maxsteps,flag,stat_num,numFile=0,nullSize,saveDen=0,&
-        nCore=0,nVirt=0
+        mem='8GB',ncpu='2',alterations='',activeSpace='',command_message,nucUpdate='sudden'
+      character(len=4),dimension(:),allocatable::atomList
+      integer(kind=int64)::iOut=6,iPrint=1,iUnit,unitno,i,j,k,maxsteps,flag,stat_num,numFile=0,nullSize,&
+        saveDen=0,nCore=0,nVirt=0,nNucSteps=0,nucStep,nAtoms,io_stat_number,exit_stat_number,&
+        cmd_stat_number
       integer(kind=int64),dimension(:),allocatable::isubs,inactiveList,activeList,alphaList,betaList
+      integer(kind=int64),allocatable::maxNucSteps
       real(kind=real64)::delta_t=0.1,field_size=0.005,simTime=100.0,t0=0.0,sigma=0.5,omega=10.0,&
-        beta=3.0
-      real(kind=real64),allocatable::tcf_start
+        beta=3.0,newCharge,xCoord,yCoord,zCoord,current_time,nucStart=0.0
+      real(kind=real64),allocatable::tcf_start,nucTime
+      real(kind=real64),parameter::zero_thresh=1.00E-8
       complex(kind=real64)::imag=(0.0,1.0)
       logical::UHF,file_exists,doVelDip=.false.,doDirect=.false.,found,doProcMem=.false.,&
         keep_intermediate_files=.false.
@@ -42,23 +46,24 @@
       type(mqc_scf_integral),dimension(3)::dipole,dipoleMO,veldipole
       type(mqc_scf_integral),dimension(:),allocatable::mo_list
       type(mqc_matrix)::CI_Hamiltonian,exp_CI_Hamiltonian,CI_Overlap,iden,sh2AtMp,shlTyp,nPrmSh,prmExp,&
-        conCoef,conCoTwo,shCoor
+        conCoef,conCoTwo,shCoor,saved_pscf_amplitudes,newGeom
       type(mqc_matrix),dimension(3)::CI_Dipole,dipole_eigvecs,Xmat,invXmat
       type(mqc_vector)::subs,nuclear_dipole,total_dipole,state_coeffs,td_ci_coeffs,field_vector,&
-        td_field_vector,tcf_ci_epsilon,tcf,total_veldip
+        td_field_vector,tcf_ci_epsilon,tcf,total_veldip,new_state_coeffs,chargeList
       type(mqc_vector),dimension(3)::dipole_eigvals
       type(mqc_vector),dimension(2)::nRoot
-      real(kind=real64),parameter::zero_thresh=1.00E-8
 !
 !*    USAGE
-!*      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--sub-levels <substitutions>] 
-!*        [--core-orbitals <core-orbitals>] [--virt-orbitals <virt-orbitals>] 
-!*        [--active-space <active_space>] [--alter <alter_list>] [--ci-type <type_string>] 
-!*        [--direct] [--gauss-exe <gaussian_executable_string>] [--do-proc-mem] [--mem <mem>] 
-!*        [--ncpu <ncpu>] [--keep-inters] [--intial-state <weight_vector>] [--pulse-shape <pulse>] 
-!*        [--field-vector <field_vector>] [--field-size <magnitude>] [--t0 <time>] 
-!*        [--omega <frequency>] [--sigma <width>] [--beta <shift>] [--tcf-start <time>] 
-!*        [--time-step <time_step>] [--simulation-time <time>] [--help]
+!*      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--print-veldip] 
+!*        [--sub-levels <substitutions>] [--core-orbitals <core-orbitals>] 
+!*        [--virt-orbitals <virt-orbitals>] [--active-space <active_space>] [--alter <alter_list>] 
+!*        [--ci-type <type_string>] [--direct] [--gauss-exe <gaussian_executable_string>] 
+!*        [--do-proc-mem] [--mem <mem>] [--ncpu <ncpu>] [--keep-inters] 
+!*        [--intial-state <weight_vector>] [--pulse-shape <pulse>] [--field-vector <field_vector>] 
+!*        [--field-size <magnitude>] [--t0 <time>] [--omega <frequency>] [--sigma <width>] 
+!*        [--beta <shift>] [--tcf-start <time>] [--time-step <time_step>] [--simulation-time <time>] 
+!*        [--save <steps>] [--nuclear-step <update_file>] [--nuclear-time <time>] 
+!*        [--nuclear_start <time>] [--maxNucSteps <steps>] [--nuclear-update <method>] [--help]
 !*
 !*    OPTIONS
 !* 
@@ -68,8 +73,8 @@
       write(IOut,'(*(A))') NEW_LINE('a'),' ',repeat('*',73),NEW_LINE('a'), &
           '  Real-Time Truncated Configuration Interaction Time Evolution Calculator',NEW_LINE('a'), &
           ' ',repeat('*',73),NEW_LINE('a'), &
-          NEW_LINE('a'),repeat(' ',30),'Version 21.10.1',NEW_LINE('a'),NEW_LINE('a'),&
-          ' L. M. Thompson, Louisville KY, 2021.',NEW_LINE('a')
+          NEW_LINE('a'),repeat(' ',30),'Version 22.1.1',NEW_LINE('a'),NEW_LINE('a'),&
+          ' L. M. Thompson, A. M. Kinyua, Louisville KY, 2022.',NEW_LINE('a')
 !
 !     Parse input options.
 !
@@ -383,6 +388,64 @@
           call mqc_get_command_argument(i+1,command)
           read(command,'(I5)') saveDen
           j = i + 2
+!
+!*   7. Nuclear potential 
+!*
+        elseIf(command.eq.'--nuclear-step') then
+!
+!*      --nuclear-step file_name         File giving increment to nuclear coordinates and nuclear charge for
+!*                                       each step in the nuclear potential. 
+!*
+!*                                       WARNING! The current implementation overwrites the input matrix files.
+!*
+          call mqc_get_command_argument(i+1,nucFile)
+          j = i + 2
+        elseif(command.eq.'--nuclear-time') then
+!
+!*      --nuclear-time nuclear_time      Time step for each change in nuclear geometry in au (default is equal
+!*                                       to simulation time so no nuclear step is taken).
+!*
+          call mqc_get_command_argument(i+1,command)
+          allocate(nucTime)
+          read(command,'(F12.6)') nucTime
+          j = i + 2
+        elseif(command.eq.'--nuclear-start') then
+!
+!*      --nuclear-start nuclear_start    Time at which to start the nuclear steps so the first step is taken
+!*                                       at nuclear_start+nuclear_time. Default is 0.0 au.
+!*
+          call mqc_get_command_argument(i+1,command)
+          read(command,'(F12.6)') nucStart
+          j = i + 2
+        elseif(command.eq.'--maxNucSteps') then
+!
+!*      --maxNucSteps nuclear_steps      Maximum number of nuclear steps. Can be used to specify the number of
+!*                                       times the nuclear increment is applied.
+!*
+          call mqc_get_command_argument(i+1,command)
+          allocate(maxNucSteps)
+          read(command,'(I3)') maxNucSteps
+          j = i + 2
+        elseIf(command.eq.'--nuclear-update') then
+!
+!*      --nuclear-update nuclear_update  Method for updating the state weights after a nuclear step. Options 
+!*                                       are:
+!*                                       1) sudden (default)
+!*                                          Reweight eigenstates so that wavefunction is the same after the 
+!*                                          nuclear step, i.e. the wavefunction does not have time to respond
+!*                                          to the perturbation.
+!*                                       2) adiabatic
+!*                                          Keep eigenstate weights the same after the nuclear step, i.e. the
+!*                                          perturbation is slow enough that the wavefunction adapts to stay 
+!*                                          in the same state.
+!*
+          call mqc_get_command_argument(i+1,command)
+          nucUpdate = command
+          call string_change_case(nucUpdate,'l')
+          j = i + 2
+!
+!*   8. Help 
+!*
         elseIf(command.eq.'--help') then
 !
 !*      --help                           Output help documentation to terminal.
@@ -399,314 +462,18 @@
         endIf
       endDo
 !
-!     Parse input file and extract required data from matrix files.
-!
-      if(.not.allocated(fileName)) call mqc_error('No input file provided',iOut)
-      open(newunit=iUnit,file=fileName,status='old',iostat=stat_num)
-      if(stat_num/=0) call mqc_error_a('Error opening file',iOut,'fileName',fileName)
-      read(unit=iUnit,fmt='(i20)',iostat=stat_num) numFile
-      if(stat_num/=0) call mqc_error('Error reading file number',iOut)
-      allocate(fileList(numFile))
-      do i = 1, numFile
-        read(unit=iUnit,fmt='(A)',iostat=stat_num) fileList(i)
-        if((stat_num<0).and.(i<=numFile)) call mqc_error('File EOF reached early',iOut)
-      endDo
-      close(unit=iUnit)
-!
-      if((ci_string.eq.'oci'.or.ci_string.eq.'ocas').and.numFile.ne.1) then
-        call mqc_error('Multiple matrix files input to requested orthogonal CI expansion.&
-          & Use sub-levels option to provide expansion',iOut)
-      elseIf(ci_string.eq.'oci'.or.ci_string.eq.'ocas'.or.ci_string.eq.'noci') then
-        allocate(mo_list(numFile))
-        do i = 1, numFile
-          call fileInfo%getESTObj('mo coefficients',est_integral=mo_list(i),filename=fileList(i))
-          if(iPrint.ge.4) call mo_list(i)%print(iOut,'MO coefficients from matrix file '//trim(num2char(i)))
-        endDo
-      elseIf(ci_string.eq.'hci'.or.ci_string.eq.'hcas') then
-        call mqc_error('Hybrid ci type is not yet implemented',iOut)
-      else
-        call mqc_error_a('Unrecognized CI type string provided',iOut,'ci_string',ci_string)
-      endIf
-!
-      if(len_trim(alterations).ne.0) then
-        call orbital_swapper(alterations,mo_list)
-        if(iPrint.ge.4) then
-          do i = 1, numFile
-            call mo_list(i)%print(iOut,'Altered MO coefficients '//trim(num2char(i)))
-          endDo
-        endIf
-      endIf
-!
-!      call MQC_Gaussian_SetDEBUG(.true.)
-      call fileInfo%load(fileList(1))
-      call fileInfo%getMolData(moleculeInfo)
-      call fileInfo%getESTObj('wavefunction',wavefunction)
-      if(iPrint.ge.4) call wavefunction%print(iOut,'all')
-      call fileInfo%getESTObj('dipole x',est_integral=dipole(1))
-      if(iPrint.ge.4) call dipole(1)%print(6,'AO dipole x integrals')
-      call fileInfo%getESTObj('dipole y',est_integral=dipole(2))
-      if(iPrint.ge.4) call dipole(2)%print(6,'AO dipole y integrals')
-      call fileInfo%getESTObj('dipole z',est_integral=dipole(3))
-      if(iPrint.ge.4) call dipole(3)%print(6,'AO dipole z integrals')
-      if(doVelDip) then
-        call fileInfo%getESTObj('vel dipole x',est_integral=veldipole(1))
-        if(iPrint.ge.4) call veldipole(1)%print(6,'AO velocity dipole x integrals')
-        call fileInfo%getESTObj('vel dipole y',est_integral=veldipole(2))
-        if(iPrint.ge.4) call veldipole(2)%print(6,'AO velocity dipole y integrals')
-        call fileInfo%getESTObj('vel dipole z',est_integral=veldipole(3))
-        if(iPrint.ge.4) call veldipole(3)%print(6,'AO velocity dipole z integrals')
-      endIf
-!      call MQC_Gaussian_SetDEBUG(.false.)
-!
-      if(.not.doDirect) then
-        if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
-          allocate(eris(1))
-        else
-          allocate(eris(3))
-        endIf
-        call fileInfo%get2ERIs('regular',eris(1),foundERI=found)
-        if(found.and.ci_string.ne.'oci'.and.ci_string.ne.'ocas') then
-          eris(2) = eris(1)
-          eris(3) = eris(1)
-          call mqc_twoeris_transform(eris(1),'raffenetti1')
-          call mqc_twoeris_transform(eris(2),'raffenetti2')
-          call mqc_twoeris_transform(eris(3),'raffenetti3')
-        elseIf(ci_string.ne.'oci'.and.ci_string.ne.'ocas') then
-          call fileInfo%get2ERIs('raffenetti1',eris(1),foundERI=found)
-          if(found) call fileInfo%get2ERIs('raffenetti2',eris(2),foundERI=found)
-          if(found) call fileInfo%get2ERIs('raffenetti3',eris(3),foundERI=found)
-        endIf
-        if(.not.found) call mqc_error_l('Integrals were not found on matrix file',6, &
-          'found',found)
-        if(iPrint.ge.4) then
-          do i = 1, size(eris) 
-            call eris(i)%print(iOut,'AO 2ERIs set '//trim(num2char(i)))
-          endDo
-        endIf
-      endIf
-!
-      if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
-        if(wavefunction%wf_type.eq.'U') then
-          UHF = .true.
-          if(iPrint.ge.3) write(iOut,'(1X,A)') 'Found UHF wavefunction'//NEW_LINE('A')
-        elseIf(wavefunction%wf_type.eq.'R') then
-          UHF = .False.
-          if(iPrint.ge.3) write(iOut,'(1X,A)') 'Found RHF wavefunction'//NEW_LINE('A')
-        else
-          call mqc_error_A('Unsupported wavefunction type',iOut, &
-            'Wavefunction%wf_type',wavefunction%wf_type)
-        endIf 
-        if (wavefunction%wf_complex) call mqc_error('Complex wavefunctions unsupported')
-      endIf
-!
-      if(doDirect.or.abs(saveDen).gt.0) then
-        call fileInfo%getArray('SHELL TO ATOM MAP',sh2AtMp)
-        call fileInfo%getArray('SHELL TYPES',shlTyp)
-        call fileInfo%getArray('NUMBER OF PRIMITIVES PER SHELL',nPrmSh)
-        call fileInfo%getArray('PRIMITIVE EXPONENTS',prmExp)
-        call fileInfo%getArray('CONTRACTION COEFFICIENTS',conCoef)
-        call fileInfo%getArray('P(S=P) CONTRACTION COEFFICIENTS',conCoTwo)
-        call fileInfo%getArray('COORDINATES OF EACH SHELL',shCoor)
-      endIf
-      if(doDirect.and.(ci_string.eq.'oci'.or.ci_string.eq.'ocas')) &
-        call mqc_error('Direct matrix elements not possible with orthogonal CI')
-!
-!
-!     Compute the nuclear-nuclear repulsion energy.
-!
-      call moleculeInfo%print(iOut)
-      Vnn = mqc_get_nuclear_repulsion(moleculeInfo)
-      call Vnn%print(iOut,'Nuclear Repulsion Energy (au)',Blank_At_Bottom=.true.) 
-!
-!     Generate Slater determinants wavefunction expansion if orthogonal expansion requested. 
-!
-      if(ci_string.eq.'oci') then
-        call substitution_builder(sub_string,subs)
-        if(iPrint.ge.1) then
-          write(iOut,'(1X,A)') 'Building Determinant Strings'
-          call subs%print(6,'Permitted substitution levels',Blank_At_Bottom=.true.)
-          write(iOut,'(1X,A,1X,I3,1X,A)') 'Excluding',nCore,'core orbitals'
-          write(iOut,'(1X,A,1X,I3,1X,A)') 'Excluding',nVirt,'virtual orbitals'
-        endIf
-        if(nCore.gt.min(int(wavefunction%nAlpha),int(Wavefunction%nBeta))) &
-          call mqc_error_i('Impossible number of core orbitals requested in truncated CI expansion',&
-          6,'nCore',nCore,'wavefunction%nAlpha',int(wavefunction%nAlpha),'wavefunction%nBeta',&
-          int(wavefunction%nBeta))
-        if(nVirt.gt.min(int(wavefunction%nBasis-wavefunction%nAlpha),int(wavefunction%nBasis-Wavefunction%nBeta))) &
-          call mqc_error_i('Impossible number of virtual orbitals excluded from truncated CI expansion',&
-          6,'nVirt',nVirt,'wwavefunction%nBasis-avefunction%nAlpha',int(wavefunction%nBasis-wavefunction%nAlpha),&
-          'wavefunction%nBasis-wavefunction%nBeta',int(wavefunction%nBasis-wavefunction%nBeta))
-        isubs = [(i, i=1,int(maxval(subs)))]
-        call trci_dets_string(iOut,iPrint,wavefunction%nBasis-nCore-nVirt,wavefunction%nAlpha-nCore, &
-          Wavefunction%nBeta-nCore,isubs,determinants,nCore)
-      elseIf(ci_string.eq.'ocas') then
-        call parse_active_space(activeSpace,numFile,wavefunction%nBasis,wavefunction%nAlpha,&
-          Wavefunction%nBeta,Wavefunction%nElectrons,activeList,inactiveList,alphaList,betaList)
-        if(iPrint.ge.1) then
-          write(iOut,'(1X,A)') 'Building Determinant Strings'
-          call mqc_print(6,activeList,'Active orbitals')
-          call mqc_print(6,inactiveList,'Core orbitals')
-          call mqc_print(6,alphaList,'Active alpha electrons')
-          call mqc_print(6,betaList,'Active beta electrons')
-        endIf
-        call gen_det_str(iOut,iPrint,activeList(1),alphaList(1),betaList(1),determinants,inactiveList(1))
-        nCore = inactiveList(1)
-        nVirt = wavefunction%nBasis-nCore-activeList(1)
-      endIf
-!
-!     Transform one and two-electron integrals to MO basis (only if performing orthogonal CI).
-!
-      if(ci_string.ne.'noci') then
-        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Transforming MO integrals'//NEW_LINE('A')
-        mo_core_ham = matmul(dagger(wavefunction%MO_Coefficients),matmul(wavefunction%core_Hamiltonian, &
-            Wavefunction%MO_Coefficients))
-        if(IPrint.ge.4) call mo_core_ham%print(iOut,'MO Basis Core Hamiltonian') 
-        call twoERI_trans(iOut,iPrint,wavefunction%MO_Coefficients,ERIs(1),mo_ERIs)
-      endIf
-!
-!     Compute nuclear dipole moment.
-!
-      nuclear_dipole = matmul(transpose(moleculeInfo%Nuclear_Charges),&
-        transpose(moleculeInfo%Cartesian_Coordinates))
-      if(iPrint.ge.1) call nuclear_dipole%print(6,'Nuclear dipole',Blank_At_Bottom=.true.)
-      call total_dipole%init(3)
-      if(doVelDip) call total_veldip%init(3)
-!
-!     Generate field-free Hamiltonian matrix and dipole matrices (in length form) in CI basis.
-!
-      if(ci_string.eq.'oci') then
-        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
-        call subs%unshift(0)
-        isubs = subs
-        call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
-          mo_core_ham,mo_ERIs,UHF,CI_Hamiltonian,isubs)
-        if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
-        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI dipole matrices'
-        do i = 1, 3
-          dipoleMO(i) = matmul(dagger(wavefunction%MO_Coefficients),&
-            matmul(dipole(i),Wavefunction%MO_Coefficients))
-          if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)),&
-            Blank_At_Bottom=.true.)
-          call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
-            dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i),subs=isubs)
-          if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)),&
-            Blank_At_Bottom=.true.)
-          call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
-          CI_Dipole(i) = iden - CI_Dipole(i)
-          if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//&
-            trim(num2char(i)),Blank_At_Bottom=.true.)
-        endDo
-      elseIf(ci_string.eq.'ocas') then
-        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
-        call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
-          mo_core_ham,mo_ERIs,UHF,CI_Hamiltonian)
-        if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
-        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI dipole matrices'
-        do i = 1, 3
-          dipoleMO(i) = matmul(dagger(wavefunction%MO_Coefficients),&
-            matmul(dipole(i),Wavefunction%MO_Coefficients))
-          if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)),&
-            Blank_At_Bottom=.true.)
-          call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
-            dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i))
-          if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)),&
-            Blank_At_Bottom=.true.)
-          call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
-          CI_Dipole(i) = iden - CI_Dipole(i)
-          if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//&
-            trim(num2char(i)),Blank_At_Bottom=.true.)
-        endDo
-      elseIf(ci_string.eq.'noci') then
-        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building nonorthogonal CI Hamiltonian, CI overlap and CI dipole matrices'
-!       loop over pairs of Slater determinants and build transition density matrices. Get the H, N and Mu CI matrices
-        call CI_Hamiltonian%init(numFile,numFile,storage='StorHerm') 
-        call CI_Overlap%init(numFile,numFile,storage='StorHerm') 
-        do i = 1, 3
-          call CI_Dipole(i)%init(numFile,numFile,storage='StorHerm') 
-        endDo
-        do i = 1, numFile
-          do j = 1, i
-            call get_rhos(rho,nIJ,pnIJ,nullSize,mo_list(i),mo_list(j),wavefunction%overlap_matrix,wavefunction%nBasis,&
-              wavefunction%nAlpha,wavefunction%nBeta)
-            call CI_Overlap%put(nIJ,i,j,'hermitian')
-            hij = get_hij(pnij,nullSize,rho,wavefunction%core_Hamiltonian,eris,doDirect,fileInfo,fileName,&
-              symIndexHash(i,j),sh2AtMp,shlTyp,nPrmSh,prmExp,conCoef,conCoTwo,shCoor,gauss_exe,doProcMem,&
-              mem,ncpu,keep_intermediate_files)
-            call CI_Hamiltonian%put(hIJ,i,j,'hermitian')
-            do k = 1, 3
-              dij = get_dij(pnij,nullSize,rho(2),dipole(k))
-              call CI_Dipole(k)%put(dij,i,j,'hermitian')
-            endDo
-          endDo
-        endDo
-        if(iPrint.ge.4) call CI_Overlap%print(6,'CI Overlap',Blank_At_Bottom=.true.)
-        if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
-        do i = 1, 3
-          call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
-          CI_Dipole(i) = iden - CI_Dipole(i)
-          if(iPrint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//&
-            trim(num2char(i)),Blank_At_Bottom=.true.)
-        endDo
-      endIf
-!
-!     Diagonalize Hamiltonian
-!
-      if(iPrint.ge.1) write(iOut,'(1X,A)') 'Diagonalizing CI Hamiltonian'//NEW_LINE('A')
-      if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
-        call CI_Hamiltonian%diag(wavefunction%pscf_energies,wavefunction%pscf_amplitudes)
-      elseIf(ci_string.eq.'noci') then
-        call CI_Hamiltonian%eigensys(CI_Overlap,wavefunction%pscf_energies,wavefunction%pscf_amplitudes)
-      endIf
-
-      if(iPrint.ge.4) call wavefunction%pscf_amplitudes%print(iOut,'CI Eigenvectors',Blank_At_Bottom=.true.)
-      if(iPrint.ge.3) call wavefunction%pscf_energies%print(iOut,'CI Eigenvalues',Blank_At_Bottom=.true.)
-!
-!     Diagonalize the dipole moment matrix to get transformation matrix U
-!
-      do i = 1, 3
-        if(iPrint.eq.1) write(iOut,'(1X,A)') 'Diagonalizing SD dipole axis '//trim(num2char(i))//NEW_LINE('A')
-        if (ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
-          call CI_Dipole(i)%diag(dipole_eigvals(i),dipole_eigvecs(i))
-        elseIf(ci_string.eq.'noci') then
-          call CI_Dipole(i)%eigensys(CI_Overlap,dipole_eigvals(i),dipole_eigvecs(i))
-        endIf
-        if(iPrint.ge.4) call dipole_eigvecs(i)%print(iOut,'CI Dipole Eigenvectors axis '//trim(num2char(i)),&
-          Blank_At_Bottom=.true.)
-        if(iprint.ge.3) call dipole_eigvals(i)%print(iOut,'CI Dipole Eigenvalues axis '//trim(num2char(i)),&
-          Blank_At_Bottom=.true.)
-        if (ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
-          Xmat(i) = matmul(dagger(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
-          invXmat(i) = dagger(Xmat(i))
-          if(iPrint.ge.2) call mqc_print(matmul(matmul(dagger(wavefunction%pscf_amplitudes),CI_Dipole(i)),&
-            wavefunction%pscf_amplitudes),6,'State basis dipoles and transition dipoles on axis '//trim(num2char(i)),&
-            Blank_At_Bottom=.true.)
-        elseIf(ci_string.eq.'noci') then
-          Xmat(i) = matmul(mqc_matrix_inverse(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
-          invXmat(i) = mqc_matrix_inverse(Xmat(i))
-          if(iPrint.ge.2) call mqc_print(matmul(matmul(wavefunction%pscf_amplitudes%inv(),CI_Dipole(i)),&
-            wavefunction%pscf_amplitudes),6,'State basis dipoles and transition dipoles on axis '//trim(num2char(i)),&
-            Blank_At_Bottom=.true.)
-        endIf
-      endDo
-!
 !     Build the electric field pulse vector
 !
       call field_vector_builder(field_string,field_vector)
       field_vector = field_vector*field_size
 !
-!     Determine initial conditions in the basis of CI states.
+!     Output simulation conditions
 !
-      call root_vector_builder(root_string,size(wavefunction%pscf_energies),nRoot)
-      call state_coeffs%init(size(wavefunction%pscf_energies),0.0)
-      maxsteps = simTime/delta_t 
-      do i = 1, size(nroot(1))
-        call state_coeffs%put(nRoot(2)%at(i),nRoot(1)%at(i))
-      endDo
-      state_coeffs = state_coeffs/state_coeffs%norm()
+      call root_vector_builder(root_string,nRoot)
       vecString = '# 4) State weights:'//repeat(' ',24)//'#'//NEW_LINE('a')
       do i = 1, size(nRoot(1))
         vecString = trim(vecString)//' #'//repeat(' ',26)//trim(num2char(nRoot(1)%at(i),'I3'))//' = '//&
-          trim(num2char(state_coeffs%at(nRoot(1)%at(i)),'F7.4'))//repeat(' ',6)//'#'
+          trim(num2char(nRoot(2)%at(i),'F7.4'))//repeat(' ',6)//'#'
         if(i.ne.size(nRoot(1))) vecString = trim(vecString)//NEW_LINE('a')
       endDo
       write(iOut,'(1X,A)')               '############################################'
@@ -715,7 +482,7 @@
       write(iOut,'(1X,A)')               '#            ------------------            #'
       write(iOut,'(1X,A)')               '#                                          #'
       write(iOut,'(1X,A,1X,F15.6,A)')      '# 1) Simulation time:',simTime,' au   #'
-      write(iOut,'(1X,A,1X,I15,A)')      '# 2) Number of steps:',maxsteps,'      #'
+      write(iOut,'(1X,A,1X,I15,A)')      '# 2) Number of steps:',int(simTime/delta_t),'      #'
       write(iOut,'(1X,A,1X,F21.6,1X,A)') '# 3) Time step:',delta_t,'au   #'
       write(iOut,'(1X,A)')               trim(vecString)
       write(iOut,'(1X,A)')               '# 5) Field parameters:                     #' 
@@ -732,98 +499,494 @@
       write(iOut,'(1X,A)')               '############################################'
       write(iOut,'(1X,A)')               ''
 !
-!     Do loops over time-steps and propagate CI coefficients in each time step using eq. 16 of 
-!     Krause et al. J. Phys. Chem., 2007, 127, 034107.
+!     Parse input file.
 !
-      write(iOut,'(1X,A)') 'STARTING TIME PROPAGATION'//NEW_LINE('A')
-      do i = 0, maxsteps
-        write(iOut,'(1X,A)') repeat('=',44)//NEW_LINE('A')
-        if(i.eq.maxsteps) write(iOut,'(1X,A)') repeat(' ',16)//'FINAL TIME STEP'//NEW_LINE('A')//NEW_LINE('A')//&
-        ' '//repeat('=',44)//NEW_LINE('A')
-        write(iOut,'(1X,A,1X,F12.6,1X,A)') 'Time step:',delta_t*i,'au'//NEW_LINE('A')
-
-        td_field_vector = get_field_vector(delta_t,i,field_vector,pulseShape,t0,omega,sigma,beta)
-        call td_field_vector%print(6,'Applied field vector',Blank_At_Bottom=.true.)
-
-        if(i.gt.0) then
-          state_coeffs = exp((-1)*imag*delta_t*wavefunction%pscf_energies).ewp.state_coeffs
-          do j = 3, 1, -1
-            state_coeffs = matmul(Xmat(j),state_coeffs)
-            state_coeffs = exp(imag*delta_t*td_field_vector%at(j)*dipole_eigvals(j)).ewp.state_coeffs
-            state_coeffs = matmul(invXmat(j),state_coeffs)
-          endDo
-        endIf
-        call print_coeffs_and_pops(iOut,iPrint,1,state_coeffs,'TD State')
-
-        call td_ci_coeffs%init(size(wavefunction%pscf_amplitudes,1))
-        do j = 1, size(state_coeffs)
-          td_ci_coeffs = td_ci_coeffs + state_coeffs%at(j)*wavefunction%pscf_amplitudes%vat([0],[j])
-        endDo
-        call print_coeffs_and_pops(iOut,iPrint,2,td_ci_coeffs/td_ci_coeffs%norm(),'TD CI')
-
-        if(allocated(tcf_start)) then
-          if(delta_t*i.ge.tcf_start.and.delta_t*i.lt.tcf_start+delta_t) tcf_ci_epsilon = td_ci_coeffs/td_ci_coeffs%norm()
-          if(delta_t*i.ge.tcf_start) call tcf%push(dot_product(dagger(tcf_ci_epsilon),td_ci_coeffs/td_ci_coeffs%norm()))
-        endIf
-
-        final_energy = get_CI_Energy(CI_Hamiltonian,td_ci_coeffs) 
-        if(iPrint.ge.1.or.i.eq.maxsteps) call final_energy%print(6,'Energy (au)',Blank_At_Bottom=.true.,&
-          FormatStr='F14.8')
-
-        if(iPrint.ge.1.or.i.eq.maxsteps) call mqc_print(state_coeffs.outer.transpose(state_coeffs),6,'State Density matrix', &
-          Blank_At_Bottom=.true.)
-        if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
-          density = get_one_gamma_matrix(iOut,iPrint,wavefunction%nBasis-nVirt,determinants,td_ci_coeffs,UHF,&
-            nOrbsIn=int(wavefunction%nBasis),subs=isubs)
-          if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'MO Density matrix',Blank_At_Bottom=.true.)
-          density = matmul(matmul(wavefunction%mo_coefficients,density),dagger(wavefunction%mo_coefficients))
-          if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'AO Density matrix',Blank_At_Bottom=.true.)
-        else
-          density = get_noci_density(td_ci_coeffs,mo_list,wavefunction%overlap_matrix,wavefunction%nBasis,&
-            wavefunction%nAlpha,wavefunction%nBeta) 
-          if(iPrint.ge.1.or.i.eq.maxsteps) call mqc_print(matmul(matmul(matmul(dagger(mo_list(1)),&
-            wavefunction%overlap_matrix),density),matmul(wavefunction%overlap_matrix,mo_list(1))),&
-            6,'MO Density matrix (projected on MOs 1)',Blank_At_Bottom=.true.)
-          if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'AO Density matrix',Blank_At_Bottom=.true.)
-        endIf
-        do j = 1, 3
-          call total_dipole%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
-          if(doVelDip) call total_veldip%put((-1)*contraction(density,veldipole(j)) + nuclear_dipole%at(j),j)
-        endDo
-        call total_dipole%print(6,'Total dipole',Blank_At_Bottom=.true.)
-        if(doVelDip) call total_veldip%print(6,'Total velocity gauge dipole',Blank_At_Bottom=.true.)
-
-        if(abs(saveDen).gt.0) then
-          if(mod(i,abs(saveDen)).eq.0) call outputCheckFile(fileInfo,'MO-matrix-'//trim(num2char(i)),&
-            density,sh2AtMp,shlTyp,nPrmSh,prmExp,conCoef,conCoTwo,shCoor,wavefunction)
-        endIf
-
+      if(.not.allocated(fileName)) call mqc_error('No input file provided',iOut)
+      open(newunit=iUnit,file=fileName,status='old',iostat=stat_num)
+      if(stat_num/=0) call mqc_error_a('Error opening file',iOut,'fileName',fileName)
+      read(unit=iUnit,fmt='(i20)',iostat=stat_num) numFile
+      if(stat_num/=0) call mqc_error('Error reading file number',iOut)
+      allocate(fileList(numFile))
+      do i = 1, numFile
+        read(unit=iUnit,fmt='(A)',iostat=stat_num) fileList(i)
+        if((stat_num<0).and.(i<=numFile)) call mqc_error('File EOF reached early',iOut)
       endDo
-
-      if(allocated(tcf_start)) then
-        if(tcf_start.gt.simTime) then
-          write(iOut,'(A)') 'Time correlation function requested to start after simulation time' 
-        else
-          i = 1
-          file_exists = .true.
-          file_tmp = trim(tcf_file)
-          do while (file_exists) 
-            inquire(file=trim(file_tmp)//'.dat',exist=file_exists)
-            if(file_exists) then
-              i = i+1
-              file_tmp = trim(tcf_file)
-              call build_string_add_int(i,file_tmp,20)
-            else
-              open(newunit=iunit,file=trim(file_tmp)//'.dat',status='new',iostat=stat_num)
-              if(stat_num.ne.0) call mqc_error_a('Could not open file',6,'file name',trim(file_tmp)//'.dat')
-              call tcf%print(iUnit,'# time (time step: '//trim(num2char(delta_t))//'as, tcf start: '//&
-                trim(num2char(tcf_start))//')'//repeat(' ',10)//'time correlation function')
-              write(iOut,'(A)') 'Saving data to file name '//trim(file_tmp)//'.dat'
-            endIf
-          endDo
-        endIf
+      close(unit=iUnit)
+!
+!     Update nuclear potential if necessary.
+!
+      if(allocated(nucTime)) then
+        nNucSteps = (simTime-nucStart)/nucTime
+        if(nNucSteps.lt.0) call mqc_error('Number of nuclear steps less than zero. Check &
+          &nuclear step input parameters.')
+      else
+        allocate(nucTime)
+        nucTime = simTime
+      endIf
+      
+      if(allocated(maxNucSteps)) then
+        if(maxNucSteps.lt.nNucSteps) nNucSteps = maxNucSteps
       endIf
 
+      if(nNucSteps.ge.1) then
+        if(.not.allocated(nucFile)) call mqc_error('No nuclear update file provided',6)
+        open(newunit=unitno,file=nucFile,status='old',iostat=io_stat_number)
+        if(io_stat_number/=0) then
+          call mqc_error('Error opening nuclear update file',6)
+        endIf
+        read(unit=unitno, fmt='(i2)', iostat=io_stat_number) nAtoms
+        if(nAtoms/=fileInfo%getVal('natoms',filename=fileList(1))) &
+          call mqc_error_i('Import of nuclear change failed',6,'atoms on file',&
+          nAtoms,'atoms on disk',MQC_Scalar_Get_Intrinsic_Integer(moleculeInfo%getNumAtoms()))
+        call newGeom%init(3,nAtoms)
+        call chargeList%init(nAtoms)
+        read(unit=unitno, fmt=*)
+        do j = 1,nAtoms
+          read(unit=unitno, fmt=*, iostat=io_stat_number) newCharge, xCoord, yCoord, zCoord
+          call chargeList%put(newCharge,j)
+          call newGeom%put(xCoord/angPBohr,1,j)
+          call newGeom%put(yCoord/angPBohr,2,j)
+          call newGeom%put(zCoord/angPBohr,3,j)
+        endDo
+      endIf
+
+      nucloop: do nucStep = 0, nNucSteps
+        
+        if(nucStep.ge.1) then
+          write(iOut,'(1X,A)') repeat('*',50)//NEW_LINE('A')
+          write(iOut,'(1X,A)') repeat(' ',12)//'UPDATING NUCLEAR POTENTIAL'//NEW_LINE('A')//NEW_LINE('A')//&
+          ' '//repeat('*',50)//NEW_LINE('A')
+          if(allocated(eris)) deallocate(eris)
+          atomlist = MQC_Get_Nuclear_Symbols(moleculeInfo)
+          do i = 1,size(fileList)
+            call write_GauIn_file(iPrint,'nuclear_update_temp.com',fileList(i),.false.,doProcMem,ncpu,mem,'chkbas',&
+              .false.,(i.eq.1.and..not.doDirect),atomList,angPBohr*(moleculeInfo%Cartesian_Coordinates+NewGeom),&
+              fileInfo%getVal('charge',filename=fileList(1)),fileInfo%getVal('multiplicity',filename=fileList(1)),&
+              moleculeInfo%Nuclear_Charges+chargeList)
+          endDo
+          call EXECUTE_COMMAND_LINE(gauss_exe//' nuclear_update_temp.com',exitstat=exit_stat_number,&
+            cmdstat=cmd_stat_number,cmdmsg=command_message)
+          if(exit_stat_number/=0) then
+            call mqc_error_i('Error executing Gaussian calculation',6,'exit flag',exit_stat_number)
+          elseIf(cmd_stat_number/=0) then
+            call mqc_error_a('Could not execute Gaussian calculation',6,'cmdnsg',command_message)
+          endIf
+        endIf
+!
+!       Extract required data from matrix files.
+!
+        if((ci_string.eq.'oci'.or.ci_string.eq.'ocas').and.numFile.ne.1) then
+          call mqc_error('Multiple matrix files input to requested orthogonal CI expansion.&
+            & Use sub-levels option to provide expansion',iOut)
+        elseIf(ci_string.eq.'oci'.or.ci_string.eq.'ocas'.or.ci_string.eq.'noci') then
+          if(.not.allocated(mo_list)) allocate(mo_list(numFile))
+          do i = 1, numFile
+            call fileInfo%getESTObj('mo coefficients',est_integral=mo_list(i),filename=fileList(i))
+            if(iPrint.ge.4) call mo_list(i)%print(iOut,'MO coefficients from matrix file '//trim(num2char(i)))
+          endDo
+        elseIf(ci_string.eq.'hci'.or.ci_string.eq.'hcas') then
+          call mqc_error('Hybrid ci type is not yet implemented',iOut)
+        else
+          call mqc_error_a('Unrecognized CI type string provided',iOut,'ci_string',ci_string)
+        endIf
+!
+        if(len_trim(alterations).ne.0) then
+          call orbital_swapper(alterations,mo_list)
+          if(iPrint.ge.4) then
+            do i = 1, numFile
+              call mo_list(i)%print(iOut,'Altered MO coefficients '//trim(num2char(i)))
+            endDo
+          endIf
+        endIf
+!
+!        call MQC_Gaussian_SetDEBUG(.true.)
+        call fileInfo%load(fileList(1))
+        call fileInfo%getMolData(moleculeInfo)
+        call fileInfo%getESTObj('wavefunction',wavefunction)
+        if(iPrint.ge.4) call wavefunction%print(iOut,'all')
+        call fileInfo%getESTObj('dipole x',est_integral=dipole(1))
+        if(iPrint.ge.4) call dipole(1)%print(6,'AO dipole x integrals')
+        call fileInfo%getESTObj('dipole y',est_integral=dipole(2))
+        if(iPrint.ge.4) call dipole(2)%print(6,'AO dipole y integrals')
+        call fileInfo%getESTObj('dipole z',est_integral=dipole(3))
+        if(iPrint.ge.4) call dipole(3)%print(6,'AO dipole z integrals')
+        if(doVelDip) then
+          call fileInfo%getESTObj('vel dipole x',est_integral=veldipole(1))
+          if(iPrint.ge.4) call veldipole(1)%print(6,'AO velocity dipole x integrals')
+          call fileInfo%getESTObj('vel dipole y',est_integral=veldipole(2))
+          if(iPrint.ge.4) call veldipole(2)%print(6,'AO velocity dipole y integrals')
+          call fileInfo%getESTObj('vel dipole z',est_integral=veldipole(3))
+          if(iPrint.ge.4) call veldipole(3)%print(6,'AO velocity dipole z integrals')
+        endIf
+!        call MQC_Gaussian_SetDEBUG(.false.)
+!
+        if(.not.doDirect) then
+          if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
+            allocate(eris(1))
+          else
+            allocate(eris(3))
+          endIf
+          call fileInfo%get2ERIs('regular',eris(1),foundERI=found)
+          if(found.and.ci_string.ne.'oci'.and.ci_string.ne.'ocas') then
+            eris(2) = eris(1)
+            eris(3) = eris(1)
+            call mqc_twoeris_transform(eris(1),'raffenetti1')
+            call mqc_twoeris_transform(eris(2),'raffenetti2')
+            call mqc_twoeris_transform(eris(3),'raffenetti3')
+          elseIf(ci_string.ne.'oci'.and.ci_string.ne.'ocas') then
+            call fileInfo%get2ERIs('raffenetti1',eris(1),foundERI=found)
+            if(found) call fileInfo%get2ERIs('raffenetti2',eris(2),foundERI=found)
+            if(found) call fileInfo%get2ERIs('raffenetti3',eris(3),foundERI=found)
+          endIf
+          if(.not.found) call mqc_error_l('Integrals were not found on matrix file',6, &
+            'found',found)
+          if(iPrint.ge.4) then
+            do i = 1, size(eris) 
+              call eris(i)%print(iOut,'AO 2ERIs set '//trim(num2char(i)))
+            endDo
+          endIf
+        endIf
+!
+        if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
+          if(wavefunction%wf_type.eq.'U') then
+            UHF = .true.
+            if(iPrint.ge.3) write(iOut,'(1X,A)') 'Found UHF wavefunction'//NEW_LINE('A')
+          elseIf(wavefunction%wf_type.eq.'R') then
+            UHF = .False.
+            if(iPrint.ge.3) write(iOut,'(1X,A)') 'Found RHF wavefunction'//NEW_LINE('A')
+          else
+            call mqc_error_A('Unsupported wavefunction type',iOut, &
+              'Wavefunction%wf_type',wavefunction%wf_type)
+          endIf 
+          if (wavefunction%wf_complex) call mqc_error('Complex wavefunctions unsupported')
+        endIf
+!
+        if(doDirect.or.abs(saveDen).gt.0) then
+          call fileInfo%getArray('SHELL TO ATOM MAP',sh2AtMp)
+          call fileInfo%getArray('SHELL TYPES',shlTyp)
+          call fileInfo%getArray('NUMBER OF PRIMITIVES PER SHELL',nPrmSh)
+          call fileInfo%getArray('PRIMITIVE EXPONENTS',prmExp)
+          call fileInfo%getArray('CONTRACTION COEFFICIENTS',conCoef)
+          call fileInfo%getArray('P(S=P) CONTRACTION COEFFICIENTS',conCoTwo)
+          call fileInfo%getArray('COORDINATES OF EACH SHELL',shCoor)
+        endIf
+        if(doDirect.and.(ci_string.eq.'oci'.or.ci_string.eq.'ocas')) &
+          call mqc_error('Direct matrix elements not possible with orthogonal CI')
+!
+!
+!       Compute the nuclear-nuclear repulsion energy.
+!
+        call moleculeInfo%print(iOut)
+        Vnn = mqc_get_nuclear_repulsion(moleculeInfo)
+        call Vnn%print(iOut,'Nuclear Repulsion Energy (au)',Blank_At_Bottom=.true.) 
+!
+!       Generate Slater determinants wavefunction expansion if orthogonal expansion requested. 
+!
+        if(ci_string.eq.'oci') then
+          call substitution_builder(sub_string,subs)
+          if(iPrint.ge.1) then
+            write(iOut,'(1X,A)') 'Building Determinant Strings'
+            call subs%print(6,'Permitted substitution levels',Blank_At_Bottom=.true.)
+            write(iOut,'(1X,A,1X,I3,1X,A)') 'Excluding',nCore,'core orbitals'
+            write(iOut,'(1X,A,1X,I3,1X,A)') 'Excluding',nVirt,'virtual orbitals'
+          endIf
+          if(nCore.gt.min(int(wavefunction%nAlpha),int(Wavefunction%nBeta))) &
+            call mqc_error_i('Impossible number of core orbitals requested in truncated CI expansion',&
+            6,'nCore',nCore,'wavefunction%nAlpha',int(wavefunction%nAlpha),'wavefunction%nBeta',&
+            int(wavefunction%nBeta))
+          if(nVirt.gt.min(int(wavefunction%nBasis-wavefunction%nAlpha),int(wavefunction%nBasis-Wavefunction%nBeta))) &
+            call mqc_error_i('Impossible number of virtual orbitals excluded from truncated CI expansion',&
+            6,'nVirt',nVirt,'wwavefunction%nBasis-avefunction%nAlpha',int(wavefunction%nBasis-wavefunction%nAlpha),&
+            'wavefunction%nBasis-wavefunction%nBeta',int(wavefunction%nBasis-wavefunction%nBeta))
+          isubs = [(i, i=1,int(maxval(subs)))]
+          call trci_dets_string(iOut,iPrint,wavefunction%nBasis-nCore-nVirt,wavefunction%nAlpha-nCore, &
+            Wavefunction%nBeta-nCore,isubs,determinants,nCore)
+        elseIf(ci_string.eq.'ocas') then
+          call parse_active_space(activeSpace,numFile,wavefunction%nBasis,wavefunction%nAlpha,&
+            Wavefunction%nBeta,Wavefunction%nElectrons,activeList,inactiveList,alphaList,betaList)
+          if(iPrint.ge.1) then
+            write(iOut,'(1X,A)') 'Building Determinant Strings'
+            call mqc_print(6,activeList,'Active orbitals')
+            call mqc_print(6,inactiveList,'Core orbitals')
+            call mqc_print(6,alphaList,'Active alpha electrons')
+            call mqc_print(6,betaList,'Active beta electrons')
+          endIf
+          call gen_det_str(iOut,iPrint,activeList(1),alphaList(1),betaList(1),determinants,inactiveList(1))
+          nCore = inactiveList(1)
+          nVirt = wavefunction%nBasis-nCore-activeList(1)
+        endIf
+!
+!       Transform one and two-electron integrals to MO basis (only if performing orthogonal CI).
+!
+        if(ci_string.ne.'noci') then
+          if(iPrint.ge.1) write(iOut,'(1X,A)') 'Transforming MO integrals'//NEW_LINE('A')
+          mo_core_ham = matmul(dagger(wavefunction%MO_Coefficients),matmul(wavefunction%core_Hamiltonian, &
+              Wavefunction%MO_Coefficients))
+          if(IPrint.ge.4) call mo_core_ham%print(iOut,'MO Basis Core Hamiltonian') 
+          call twoERI_trans(iOut,iPrint,wavefunction%MO_Coefficients,ERIs(1),mo_ERIs)
+        endIf
+!
+!       Compute nuclear dipole moment.
+!
+        nuclear_dipole = matmul(transpose(moleculeInfo%Nuclear_Charges),&
+          transpose(moleculeInfo%Cartesian_Coordinates))
+        if(iPrint.ge.1) call nuclear_dipole%print(6,'Nuclear dipole',Blank_At_Bottom=.true.)
+        call total_dipole%init(3)
+        if(doVelDip) call total_veldip%init(3)
+!
+!       Generate field-free Hamiltonian matrix and dipole matrices (in length form) in CI basis.
+!
+        if(ci_string.eq.'oci') then
+          if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
+          call subs%unshift(0)
+          isubs = subs
+          call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
+            mo_core_ham,mo_ERIs,UHF,CI_Hamiltonian,isubs)
+          if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
+          if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI dipole matrices'
+          do i = 1, 3
+            dipoleMO(i) = matmul(dagger(wavefunction%MO_Coefficients),&
+              matmul(dipole(i),Wavefunction%MO_Coefficients))
+            if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)),&
+              Blank_At_Bottom=.true.)
+            call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
+              dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i),subs=isubs)
+            if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)),&
+              Blank_At_Bottom=.true.)
+            call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
+            CI_Dipole(i) = iden - CI_Dipole(i)
+            if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//&
+              trim(num2char(i)),Blank_At_Bottom=.true.)
+          endDo
+        elseIf(ci_string.eq.'ocas') then
+          if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
+          call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
+            mo_core_ham,mo_ERIs,UHF,CI_Hamiltonian)
+          if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
+          if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI dipole matrices'
+          do i = 1, 3
+            dipoleMO(i) = matmul(dagger(wavefunction%MO_Coefficients),&
+              matmul(dipole(i),Wavefunction%MO_Coefficients))
+            if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)),&
+              Blank_At_Bottom=.true.)
+            call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
+              dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i))
+            if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)),&
+              Blank_At_Bottom=.true.)
+            call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
+            CI_Dipole(i) = iden - CI_Dipole(i)
+            if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//&
+              trim(num2char(i)),Blank_At_Bottom=.true.)
+          endDo
+        elseIf(ci_string.eq.'noci') then
+          if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building nonorthogonal CI Hamiltonian, CI overlap and CI dipole matrices'
+!         loop over pairs of Slater determinants and build transition density matrices. Get the H, N and Mu CI matrices
+          call CI_Hamiltonian%init(numFile,numFile,storage='StorHerm') 
+          call CI_Overlap%init(numFile,numFile,storage='StorHerm') 
+          do i = 1, 3
+            call CI_Dipole(i)%init(numFile,numFile,storage='StorHerm') 
+          endDo
+          do i = 1, numFile
+            do j = 1, i
+              call get_rhos(rho,nIJ,pnIJ,nullSize,mo_list(i),mo_list(j),wavefunction%overlap_matrix,wavefunction%nBasis,&
+                wavefunction%nAlpha,wavefunction%nBeta)
+              call CI_Overlap%put(nIJ,i,j,'hermitian')
+              hij = get_hij(pnij,nullSize,rho,wavefunction%core_Hamiltonian,eris,doDirect,fileInfo,fileName,&
+                symIndexHash(i,j),sh2AtMp,shlTyp,nPrmSh,prmExp,conCoef,conCoTwo,shCoor,gauss_exe,doProcMem,&
+                mem,ncpu,keep_intermediate_files)
+              call CI_Hamiltonian%put(hIJ,i,j,'hermitian')
+              do k = 1, 3
+                dij = get_dij(pnij,nullSize,rho(2),dipole(k))
+                call CI_Dipole(k)%put(dij,i,j,'hermitian')
+              endDo
+            endDo
+          endDo
+          if(iPrint.ge.4) call CI_Overlap%print(6,'CI Overlap',Blank_At_Bottom=.true.)
+          if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
+          do i = 1, 3
+            call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
+            CI_Dipole(i) = iden - CI_Dipole(i)
+            if(iPrint.ge.4) call CI_Dipole(i)%print(6,'SD dipole including nuclear term axis '//&
+              trim(num2char(i)),Blank_At_Bottom=.true.)
+          endDo
+        endIf
+!
+!       Diagonalize Hamiltonian
+!
+        if(iPrint.ge.1) write(iOut,'(1X,A)') 'Diagonalizing CI Hamiltonian'//NEW_LINE('A')
+        if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
+          call CI_Hamiltonian%diag(wavefunction%pscf_energies,wavefunction%pscf_amplitudes)
+        elseIf(ci_string.eq.'noci') then
+          call CI_Hamiltonian%eigensys(CI_Overlap,wavefunction%pscf_energies,wavefunction%pscf_amplitudes)
+        endIf
+
+        if(iPrint.ge.4) call wavefunction%pscf_amplitudes%print(iOut,'CI Eigenvectors',Blank_At_Bottom=.true.)
+        if(iPrint.ge.3) call wavefunction%pscf_energies%print(iOut,'CI Eigenvalues',Blank_At_Bottom=.true.)
+!
+!       Update state coefficients if nuclear potential has changed.
+!
+        if(nucStep.eq.0) then
+          call state_coeffs%init(size(wavefunction%pscf_energies),0.0)
+          do i = 1, size(nroot(1))
+            call state_coeffs%put(nRoot(2)%at(i),nRoot(1)%at(i))
+          endDo
+        else
+          select case (nucUpdate)
+          case('sudden')
+            call new_state_coeffs%init(size(state_coeffs),0.0)
+            do i = 1, size(wavefunction%pscf_amplitudes, 1)
+              do j = 1, size(wavefunction%pscf_amplitudes, 1)
+                call new_state_coeffs%put(new_state_coeffs%at(j)+dot_product(dagger(saved_pscf_amplitudes%vat([0],[i])),&
+                  wavefunction%pscf_amplitudes%vat([0],[j]))*state_coeffs%at(i),j)
+              endDo
+            endDo
+            state_coeffs = new_state_coeffs
+          case('adiabatic')
+            continue
+          case default 
+            call mqc_error_a('Unrecognized nuclear step update argument given',6,'nucUpdate',nucUpdate)
+          end select
+        endIf
+        state_coeffs = state_coeffs/state_coeffs%norm()
+        if(nNucSteps.gt.0) saved_pscf_amplitudes = wavefunction%pscf_amplitudes
+!
+!       Diagonalize the dipole moment matrix to get transformation matrix U
+!
+        do i = 1, 3
+          if(iPrint.eq.1) write(iOut,'(1X,A)') 'Diagonalizing SD dipole axis '//trim(num2char(i))//NEW_LINE('A')
+          if (ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
+            call CI_Dipole(i)%diag(dipole_eigvals(i),dipole_eigvecs(i))
+          elseIf(ci_string.eq.'noci') then
+            call CI_Dipole(i)%eigensys(CI_Overlap,dipole_eigvals(i),dipole_eigvecs(i))
+          endIf
+          if(iPrint.ge.4) call dipole_eigvecs(i)%print(iOut,'CI Dipole Eigenvectors axis '//trim(num2char(i)),&
+            Blank_At_Bottom=.true.)
+          if(iprint.ge.3) call dipole_eigvals(i)%print(iOut,'CI Dipole Eigenvalues axis '//trim(num2char(i)),&
+            Blank_At_Bottom=.true.)
+          if (ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
+            Xmat(i) = matmul(dagger(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
+            invXmat(i) = dagger(Xmat(i))
+            if(iPrint.ge.2) call mqc_print(matmul(matmul(dagger(wavefunction%pscf_amplitudes),CI_Dipole(i)),&
+              wavefunction%pscf_amplitudes),6,'State basis dipoles and transition dipoles on axis '//trim(num2char(i)),&
+              Blank_At_Bottom=.true.)
+          elseIf(ci_string.eq.'noci') then
+            Xmat(i) = matmul(mqc_matrix_inverse(dipole_eigvecs(i)),wavefunction%pscf_amplitudes)
+            invXmat(i) = mqc_matrix_inverse(Xmat(i))
+            if(iPrint.ge.2) call mqc_print(matmul(matmul(wavefunction%pscf_amplitudes%inv(),CI_Dipole(i)),&
+              wavefunction%pscf_amplitudes),6,'State basis dipoles and transition dipoles on axis '//trim(num2char(i)),&
+              Blank_At_Bottom=.true.)
+          endIf
+        endDo
+!
+!       Determine initial conditions in the basis of CI states.
+!
+        if(nucStep.eq.nNucSteps.and.nucStep.ne.0) then
+          maxsteps = nint((simtime-nucStart-nucTime*nNucSteps)/delta_t)
+        elseIf(nucStep.eq.0) then
+          maxsteps = (nucStart+nucTime)/delta_t
+        else
+          maxsteps = nucTime/delta_t
+        endIf
+!
+!       Do loops over time-steps and propagate CI coefficients in each time step using eq. 16 of 
+!       Krause et al. J. Phys. Chem., 2007, 127, 034107.
+!
+        write(iOut,'(1X,A)') 'STARTING TIME PROPAGATION'//NEW_LINE('A')
+        do i = 0, maxsteps
+          if(nucStep.ge.1) then
+            current_time = nucStart
+          else
+            current_time = 0.0
+          endIf
+          current_time = current_time+(nucTime*nucStep)+(delta_t*i)
+          write(iOut,'(1X,A)') repeat('=',44)//NEW_LINE('A')
+          if(i.eq.maxsteps) write(iOut,'(1X,A)') repeat(' ',16)//'FINAL TIME STEP'//NEW_LINE('A')//NEW_LINE('A')//&
+          ' '//repeat('=',44)//NEW_LINE('A')
+          write(iOut,'(1X,A,1X,F12.6,1X,A)') 'Time step:',current_time,'au'//NEW_LINE('A')
+
+          td_field_vector = get_field_vector(delta_t,(maxsteps*nucStep)+nucStep+i,field_vector,pulseShape,t0,omega,sigma,beta)
+          call td_field_vector%print(6,'Applied field vector',Blank_At_Bottom=.true.)
+
+          if(i.gt.0) then
+            state_coeffs = exp((-1)*imag*delta_t*wavefunction%pscf_energies).ewp.state_coeffs
+            do j = 3, 1, -1
+              state_coeffs = matmul(Xmat(j),state_coeffs)
+              state_coeffs = exp(imag*delta_t*td_field_vector%at(j)*dipole_eigvals(j)).ewp.state_coeffs
+              state_coeffs = matmul(invXmat(j),state_coeffs)
+            endDo
+          endIf
+          call print_coeffs_and_pops(iOut,iPrint,1,state_coeffs,'TD State')
+
+          call td_ci_coeffs%init(size(wavefunction%pscf_amplitudes,1))
+          do j = 1, size(state_coeffs)
+            td_ci_coeffs = td_ci_coeffs + state_coeffs%at(j)*wavefunction%pscf_amplitudes%vat([0],[j])
+          endDo
+          call print_coeffs_and_pops(iOut,iPrint,2,td_ci_coeffs/td_ci_coeffs%norm(),'TD CI')
+
+          if(allocated(tcf_start)) then
+            if(current_time.ge.tcf_start.and.current_time.lt.tcf_start+delta_t) tcf_ci_epsilon = td_ci_coeffs/td_ci_coeffs%norm()
+            if(current_time.ge.tcf_start) call tcf%push(dot_product(dagger(tcf_ci_epsilon),td_ci_coeffs/td_ci_coeffs%norm()))
+          endIf
+
+          final_energy = get_CI_Energy(CI_Hamiltonian,td_ci_coeffs) 
+          if(iPrint.ge.1.or.i.eq.maxsteps) call final_energy%print(6,'Energy (au)',Blank_At_Bottom=.true.,&
+            FormatStr='F14.8')
+
+          if(iPrint.ge.1.or.i.eq.maxsteps) call mqc_print(state_coeffs.outer.transpose(state_coeffs),6,'State Density matrix', &
+            Blank_At_Bottom=.true.)
+          if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
+            density = get_one_gamma_matrix(iOut,iPrint,wavefunction%nBasis-nVirt,determinants,td_ci_coeffs,UHF,&
+              nOrbsIn=int(wavefunction%nBasis),subs=isubs)
+            if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'MO Density matrix',Blank_At_Bottom=.true.)
+            density = matmul(matmul(wavefunction%mo_coefficients,density),dagger(wavefunction%mo_coefficients))
+            if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'AO Density matrix',Blank_At_Bottom=.true.)
+          else
+            density = get_noci_density(td_ci_coeffs,mo_list,wavefunction%overlap_matrix,wavefunction%nBasis,&
+              wavefunction%nAlpha,wavefunction%nBeta) 
+            if(iPrint.ge.1.or.i.eq.maxsteps) call mqc_print(matmul(matmul(matmul(dagger(mo_list(1)),&
+              wavefunction%overlap_matrix),density),matmul(wavefunction%overlap_matrix,mo_list(1))),&
+              6,'MO Density matrix (projected on MOs 1)',Blank_At_Bottom=.true.)
+            if(iPrint.ge.1.or.i.eq.maxsteps) call density%print(6,'AO Density matrix',Blank_At_Bottom=.true.)
+          endIf
+          do j = 1, 3
+            call total_dipole%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
+            if(doVelDip) call total_veldip%put((-1)*contraction(density,veldipole(j)) + nuclear_dipole%at(j),j)
+          endDo
+          call total_dipole%print(6,'Total dipole',Blank_At_Bottom=.true.)
+          if(doVelDip) call total_veldip%print(6,'Total velocity gauge dipole',Blank_At_Bottom=.true.)
+
+          if(abs(saveDen).gt.0) then
+            if(mod(i,abs(saveDen)).eq.0) call outputCheckFile(fileInfo,&
+              'MO-matrix-'//trim(num2char(nucStep))//'-'//trim(num2char(i)),&
+              density,sh2AtMp,shlTyp,nPrmSh,prmExp,conCoef,conCoTwo,shCoor,wavefunction)
+          endIf
+
+        endDo
+
+        if(allocated(tcf_start)) then
+          if(tcf_start.gt.simTime) then
+            write(iOut,'(A)') 'Time correlation function requested to start after simulation time' 
+          else
+            i = 1
+            file_exists = .true.
+            file_tmp = trim(tcf_file)
+            do while (file_exists) 
+              inquire(file=trim(file_tmp)//'.dat',exist=file_exists)
+              if(file_exists) then
+                i = i+1
+                file_tmp = trim(tcf_file)
+                call build_string_add_int(i,file_tmp,20)
+              else
+                open(newunit=iunit,file=trim(file_tmp)//'.dat',status='new',iostat=stat_num)
+                if(stat_num.ne.0) call mqc_error_a('Could not open file',6,'file name',trim(file_tmp)//'.dat')
+                call tcf%print(iUnit,'# time (time step: '//trim(num2char(delta_t))//'as, tcf start: '//&
+                  trim(num2char(tcf_start))//')'//repeat(' ',10)//'time correlation function')
+                write(iOut,'(A)') 'Saving data to file name '//trim(file_tmp)//'.dat'
+              endIf
+            endDo
+          endIf
+        endIf
+      endDo nucLoop
 !
       contains
 !
@@ -906,7 +1069,7 @@
 
 !     input/output variables
       character(len=*),intent(in)::subs_in
-      type(mqc_vector),intent(inOut)::subs_out
+      type(mqc_vector),intent(out)::subs_out
 
 !     text parsing variables
       character(len=:),allocatable::subsString
@@ -1055,13 +1218,12 @@
 !     
 !     root_vector_builder is a subroutine builds the vector of initial state weights.
 !
-      subroutine root_vector_builder(root_string_in,detLen,root_vector_out)
+      subroutine root_vector_builder(root_string_in,root_vector_out)
 
       implicit none
 
 !     input/output variables
       character(len=*),intent(in)::root_string_in
-      integer,intent(in)::detLen
       type(mqc_vector),dimension(2),intent(inOut)::root_vector_out
 
 !     text parsing variables
@@ -1141,7 +1303,6 @@
 
           !  Algorithm has identified a valid pair of numbers for processing.
           if(rootSet.and.weightSet) then
-            if(root.gt.detLen) call mqc_error("Root requested exceeds dimension of Hamiltonian matrix.") 
             if(weight.gt.1.0e0) call mqc_error("Root weight is greater than one.") 
 !            call root_vector_out%put(weight,root)
             call root_vector_out(1)%push(root)
@@ -2060,6 +2221,83 @@
       end if
 
       end subroutine parse_active_space
+!
+!
+!      PROCEDURE write_GauIn_file
+!
+!      write_GauIn_file is a subroutine that writes a Gaussian input file.
+!
+       subroutine write_GauIn_file(iPrint,filename,matFile,doAppend,doProcMem,nProc,mem,route_addition,saveMat,&
+         doTwoERIs,atomList,cartesians,charge,multiplicity,nucCharge)
+!
+       implicit none
+       integer,intent(in)::iPrint
+       character(len=*),intent(in)::filename,matFile,nProc,mem
+       character(len=*),optional,intent(in)::route_addition
+       logical,intent(in)::doAppend,doProcMem,doTwoERIs
+       logical,intent(in),optional::saveMat
+       character(len=*),dimension(:),allocatable,intent(in),optional::atomList
+       type(mqc_matrix),intent(in),optional::cartesians
+       integer,intent(in),optional::charge,multiplicity
+       type(mqc_vector),intent(in),optional::nucCharge
+       integer::unitNumber,i
+       character(len=256)::chkFile,matFileSave,geomcmd
+!
+       if(.not.doAppend) then
+         open(newunit=unitNumber,file=filename,status='UNKNOWN')
+       else
+         open(newunit=unitNumber,file=filename,position='APPEND',status='OLD')
+         write(unitNumber,'(A9)') '--link1--'
+       endIf
+
+       if(doProcMem) then
+         write(unitnumber,'(A7,A)') '%nproc=',trim(nProc)
+         write(unitnumber,'(A5,A)') '%mem=',trim(mem)
+       endIf
+       write(unitnumber,'(A11,A)') '%oldmatrix=',trim(matFile)
+       chkFile = matFile(1:(len(trim(matFile))-4))
+       chkFile = trim(chkFile) // '.chk'
+       write(unitnumber,'(A5,A)') '%chk=',trim(chkFile)
+       if(present(cartesians)) then
+         geomcmd = ''
+       else
+         geomcmd = 'geom=allcheck'
+       endIf
+       if(doTwoERIs) then
+         write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(conven,skip) int=noraf nosymm output=matrix'
+       else
+         write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(skip) int=noraf nosymm output=matrix'
+       endIf
+       if(present(route_addition)) write(unitnumber,'(A2,A)') '# ',trim(route_addition)
+       write(unitnumber,'(A)') ''
+       if(present(atomList).and.present(cartesians).and.present(charge).and.present(multiplicity)) then
+         write(unitnumber,'(A)') 'Tile Card Required'
+         write(unitnumber,'(A)') ''
+         write(unitnumber,'(I3,1x,I2)') charge, multiplicity
+         if(size(atomList).ne.size(cartesians,2)) call mqc_error_i('atom name and coordinate lists are not the&
+           & same size in write_GauIn_file',6,'size(atomList)',size(atomList),'size(cartesians,2)',size(cartesians,2))
+         do i = 1, size(atomList)
+           if(present(nucCharge)) then
+             write(unitnumber,'(1x,A,A,G0,A,1x,F15.8,1x,F15.8,1x,F15.8)') trim(atomList(i)),'(znuc=',&
+               MQC_Scalar_Get_Intrinsic_Real(nucCharge%at(i)),')',MQC_Scalar_Get_Intrinsic_Real(cartesians%at(1,i)),&
+               MQC_Scalar_Get_Intrinsic_Real(cartesians%at(2,i)),MQC_Scalar_Get_Intrinsic_Real(cartesians%at(3,i))
+           else
+             write(unitnumber,'(1x,A,F15.8,1x,F15.8,1x,F15.8)') atomList(i),MQC_Scalar_Get_Intrinsic_Real(cartesians%at(1,i)),&
+               MQC_Scalar_Get_Intrinsic_Real(cartesians%at(2,i)),MQC_Scalar_Get_Intrinsic_Real(cartesians%at(3,i))
+           endIf
+         endDo
+         write(unitnumber,'(A)') ''
+       endIf
+       if(present(saveMat).and.saveMat) then
+         matFileSave = matFile(1:(len(trim(matFile))-4))
+         matFileSave = trim(matFileSave) // '-save.mat'
+         write(unitnumber,'(A)') matFileSave
+       else
+         write(unitnumber,'(A)') matFile
+       endIf
+       close(unit=unitNumber)
+
+       end subroutine write_GauIn_file
 !    
 !
 !*    NOTES
@@ -2079,6 +2317,7 @@
 !*
 !*    AUTHORS
 !*      Lee M. Thompson, University of Louisville, lee.thompson.1@lousiville.edu
+!*      Adam M. Kinyua, University of Louisville, adam.kinyua@lousiville.edu
 !*
 !*    COPYRIGHT
 !*      (c) 2021 by Lee M. Thompson distributed under terms of the MIT license.
