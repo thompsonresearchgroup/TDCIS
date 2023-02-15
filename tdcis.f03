@@ -905,7 +905,7 @@
           write(iOut,'(1X,A,1X,F12.6,1X,A)') 'Time step:',current_time,'au'//NEW_LINE('A')
 
           td_field_vector = get_field_vector(delta_t,(maxsteps*nucStep)+nucStep+i,field_vector,pulseShape,t0,omega,sigma,beta)
-          call td_field_vector%print(6,'Applied field vector',Blank_At_Bottom=.true.)
+          call td_field_vector%print(6,'Applied field vector',Blank_At_Bottom=.true.,FormatStr='F16.10')
 
           if(i.gt.0) then
             state_coeffs = exp((-1)*imag*delta_t*wavefunction%pscf_energies).ewp.state_coeffs
@@ -952,7 +952,7 @@
             call total_dipole%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
             if(doVelDip) call total_veldip%put((-1)*contraction(density,veldipole(j)) + nuclear_dipole%at(j),j)
           endDo
-          call total_dipole%print(6,'Total dipole',Blank_At_Bottom=.true.)
+          call total_dipole%print(6,'Total dipole',Blank_At_Bottom=.true.,FormatStr='F16.10')
           if(doVelDip) call total_veldip%print(6,'Total velocity gauge dipole',Blank_At_Bottom=.true.)
 
           if(abs(saveDen).gt.0) then
