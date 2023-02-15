@@ -23,7 +23,7 @@
         pulseShape='rectangle',tcf_file='tcf',file_tmp,ci_string='oci',gauss_exe='$g16root/g16/g16',&
         mem='8GB',ncpu='2',alterations='',activeSpace='',command_message,nucUpdate='sudden'
       character(len=4),dimension(:),allocatable::atomList
-      integer(kind=int64)::iOut=6,iPrint=1,iUnit,unitno,i,j,k,maxsteps,flag,stat_num,numFile=0,nullSize,&
+      integer(kind=int64)::iOut=6,iPrint=1,iUnit,i,j,k,maxsteps,flag,stat_num,numFile=0,nullSize,&
         saveDen=0,nCore=0,nVirt=0,nNucSteps=0,nucStep,nAtoms,io_stat_number,exit_stat_number,&
         cmd_stat_number
       integer(kind=int64),dimension(:),allocatable::isubs,inactiveList,activeList,alphaList,betaList
@@ -530,25 +530,26 @@
 
       if(nNucSteps.ge.1) then
         if(.not.allocated(nucFile)) call mqc_error('No nuclear update file provided',6)
-        open(newunit=unitno,file=nucFile,status='old',iostat=io_stat_number)
+        open(newunit=iUnit,file=nucFile,status='old',iostat=io_stat_number)
         if(io_stat_number/=0) then
           call mqc_error('Error opening nuclear update file',6)
         endIf
-        read(unit=unitno, fmt='(i2)', iostat=io_stat_number) nAtoms
+        read(unit=iUnit, fmt='(i2)', iostat=io_stat_number) nAtoms
         if(nAtoms/=fileInfo%getVal('natoms',filename=fileList(1))) &
           call mqc_error_i('Import of nuclear change failed',6,'atoms on file',&
           nAtoms,'atoms on disk',MQC_Scalar_Get_Intrinsic_Integer(moleculeInfo%getNumAtoms()))
         call newGeom%init(3,nAtoms)
         call chargeList%init(nAtoms)
-        read(unit=unitno, fmt=*)
+        read(unit=iUnit, fmt=*)
         do j = 1,nAtoms
-          read(unit=unitno, fmt=*, iostat=io_stat_number) newCharge, xCoord, yCoord, zCoord
+          read(unit=iUnit, fmt=*, iostat=io_stat_number) newCharge, xCoord, yCoord, zCoord
           call chargeList%put(newCharge,j)
           call newGeom%put(xCoord/angPBohr,1,j)
           call newGeom%put(yCoord/angPBohr,2,j)
           call newGeom%put(zCoord/angPBohr,3,j)
         endDo
       endIf
+      close(unit=iUnit)
 
       nucloop: do nucStep = 0, nNucSteps
         
@@ -559,10 +560,9 @@
           if(allocated(eris)) deallocate(eris)
           atomlist = MQC_Get_Nuclear_Symbols(moleculeInfo)
           do i = 1,size(fileList)
-            call write_GauIn_file(iPrint,'nuclear_update_temp.com',fileList(i),.false.,doProcMem,ncpu,mem,'chkbas',&
+            call write_GauIn_file(iPrint,'nuclear_update_temp.com',fileList(i),i.gt.1,doProcMem,ncpu,mem,'chkbas',&
               .false.,(i.eq.1.and..not.doDirect),atomList,angPBohr*(moleculeInfo%Cartesian_Coordinates+NewGeom),&
-              fileInfo%getVal('charge',filename=fileList(1)),fileInfo%getVal('multiplicity',filename=fileList(1)),&
-              moleculeInfo%Nuclear_Charges+chargeList)
+              int(wavefunction%charge),int(wavefunction%multiplicity),moleculeInfo%Nuclear_Charges+chargeList)
           endDo
           call EXECUTE_COMMAND_LINE(gauss_exe//' nuclear_update_temp.com',exitstat=exit_stat_number,&
             cmdstat=cmd_stat_number,cmdmsg=command_message)
@@ -1923,6 +1923,7 @@
         temp_file%icgu = temp_file%icgu + 10
         compSpinStr = 'complex'
       endIf
+      if(temp_file%isOpen()) call Close_MatF(temp_file%UnitNumber)
       call temp_file%create(trim(fileName)//'.mat')
       call temp_file%writeArray('SHELL TO ATOM MAP',sh2AtMp)
       call temp_file%writeArray('SHELL TYPES',shlTyp)
@@ -1939,7 +1940,7 @@
         imagORide=compSpinStr)
       call Close_MatF(temp_file%UnitNumber)
 
-      call execute_command_line("/Volumes/CaseSensitive/gauss/unfchk -matrix "//trim(fileName)//".mat "//trim(fileName)//".chk")
+      call execute_command_line("unfchk -matrix "//trim(fileName)//".mat "//trim(fileName)//".chk")
       call execute_command_line("formchk "//trim(fileName)//".chk")
       call execute_command_line("cubegen 1 density=scf "//trim(fileName)//".fchk "//trim(fileName)//".cube -3 h")
 
