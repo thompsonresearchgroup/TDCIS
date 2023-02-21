@@ -1406,7 +1406,7 @@
       mo_I_occ = mqc_integral_output_block(mo_I%orbitals('occupied',[int(nAlpha)],[int(nBeta)]),'full') 
       mo_J_occ = mqc_integral_output_block(mo_J%orbitals('occupied',[int(nAlpha)],[int(nBeta)]),'full') 
       
-      mIJ = matmul(matmul(dagger(mo_I_occ),overlap%getBlock('full')),mo_J_occ)
+      mIJ = matmul(dagger(mo_I_occ),matmul(overlap%getBlock('full'),mo_J_occ))
       nIJ = mIJ%det()
 
       orthflag = .false.
@@ -1425,14 +1425,14 @@
             nullSize = nullSize + 1
           endIf
         endDo
-        nullSize = sign(1.0,real(uMat%det()))*sign(1.0,real(vMat%det()))*nullSize
       else
         pnIJ = nIJ
         nullSize = 0
       endIf
 
       if(orthflag) then
-        call signCheckSVD(uMat,sigmaMat,vMat,int(nAlpha+nBeta)) 
+!        call signCheckSVD(uMat,sigmaMat,vMat,int(nAlpha+nBeta)) 
+        nullSize = sign(1.0,real(uMat%det()))*sign(1.0,real(vMat%det()))*nullSize
         tmoI = matmul(dagger(uMat),dagger(mo_I_occ))
         tmoJ = matmul(mo_J_occ,dagger(vMat))
         call rhoMat%init(int(nBasis)*2,int(nBasis)*2)
@@ -1683,6 +1683,8 @@
       endIf
       core_con = mqc_scf_integral_contraction(rho(2),coreham)
       gmat_con = mqc_scf_integral_contraction(rho(2),fMat-coreHam)
+!      call core_con%print(6,'Core Hamiltonian + Density contraction')
+!      call gmat_con%print(6,'G Matrix + Density  contraction <P1G(P2)>')
 
       if(abs(nullSize).gt.0) then
         if(abs(nullSize).eq.1) then
@@ -1723,6 +1725,7 @@
 
       if(abs(nullSize).lt.2) then
         dIJ = pnij*contraction(rho,oneElInt)
+        if(abs(nullSize).gt.0) dij = sign(1.0,nullSize)*dij
       else
         dIJ = zero
       endIf
@@ -1859,8 +1862,8 @@
       do i = 1, numFile
         do j = 1, i
           call get_rhos(rho,nIJ,pnIJ,nullSize,mo_list(i),mo_list(j),overlap,nBasis,nAlpha,nBeta)
-          if(nullSize.ge.2) cycle
-          weight = eigenvecs%at(i)*pnIJ*conjg(eigenvecs%at(j))
+          if(abs(nullSize).ge.2) cycle
+          weight = sign(1.0,nullSize)*eigenvecs%at(i)*pnIJ*conjg(eigenvecs%at(j))
           oneDMmat = oneDMmat + weight*rho(2)%getBlock('full')
           if(i.ne.j) oneDMmat = oneDMmat + conjg(weight)*dagger(rho(2)%getBlock('full'))
         endDo
