@@ -3,18 +3,12 @@ import math
 import sys
 
 def delta_x_y_z(file_name, time, delta_t, output_file, vibration_frequency, amplitude):
-    '''
-    CONVERSION FACTORS
-    -------------------
-    -> 1 cm^-1 == 4.55634E-6 atomic units
-    -> frequency in wavenumbers = (vibration_frequency * 4.55634E-6) in atomic units
-    -> frequency in per atomic units = 1/frequency_in_atomic_units
-    -> w = 1/(vibration_frequency*4.55634*10^-6)
-    '''
-
-    frequency_in_cm = vibration_frequency # Extracted from .log file following freq calculation
-    frequency_in_atomic_units = frequency_in_cm * 4.55634E-6
-    w = 10 / (frequency_in_atomic_units) # factor of 10 to increase frequency and reduce period
+    """
+    1 second = 4.134137E16 atomic units
+    1 cm^-1 = 2.997925E10 Hz = 2.997925E10 s^-1
+    1 cm^-1 = 2.997925E10/4.134137E16 = 7.25163E10-7 a.u.^-1
+    """
+    w = vibration_frequency *  7.25163E10-7
 
     # Open the output file for writing
     with open(output_file, 'w') as f_output:

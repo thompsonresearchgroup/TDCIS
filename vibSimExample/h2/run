@@ -1,0 +1,37 @@
+#! /bin/bash
+
+#Terminate the script if any command returns an error code
+set -e
+cp nuctxt nuc.txt;
+# Run the Gaussian calculations
+echo ' running g16 1, 2, 3';
+g16 h1.com;
+g16 h2.com;
+g16 h3.com;
+echo '';
+echo 'propagating...';
+~/TDCIS/tdcis.exe -f input.txt --print-level 1 --sub-levels [1] --initial-state [1,1.0] --field-size 0.0 --simulation-time 8.0 --nuclear-step nuc.txt --nuclear-time 0.1 --function-script 'python ~/TDCIS/frequency_sim.py' --frequencies-file d_xyz.txt --vibration-frequency 2.5 --vibration-amplitude 0.4 --save 1 > output.txt;
+echo 'done running tdcis';
+echo '';
+echo 'making NEWCUBE Dir';
+echo '--------------------------------------';
+echo '';
+mkdir -p NEWCUBE;
+echo 'generating cube files';
+echo '--------------------------------------';
+echo '';
+# i loops from 0 to 20 since simulation time is 2 and time step is 0.1
+for i in {0..79}; do for j in {0..1}; do cubegen 1 density=scf MO-matrix-$i-$j.fchk NEWCUBE/MO-matrix-$i-$j.cube -1 h MO-matrix-79-0.cube; done; done;
+echo 'making DIFFERENCE Dir';
+echo '--------------------------------------';
+cd NEWCUBE;
+cp -f MO-matrix-0-0.cube initial.cube;
+mkdir -p DIFFERENCE;
+echo ''
+echo 'Finding electron Difference';
+echo '--------------------------------------';
+for i in $(ls *.cube); do echo -e "su\n$i\ny\ninitial.cube\ny\nDIFFERENCE/Diff_$i\ny\n" | cubman; done;
+echo ''
+echo 'done!'
+echo ''
+

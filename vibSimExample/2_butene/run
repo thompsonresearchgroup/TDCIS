@@ -10,7 +10,7 @@ g16 2_butene2.com;
 g16 2_butene3.com;
 echo '';
 echo 'propagating...';
-~/TDCIS/tdcis.exe -f input.txt --print-level 1 --sub-levels [1] --initial-state [1,1.0] --field-size 0.0 --simulation-time 2.0 --nuclear-step nuc.txt --nuclear-time 0.1 --function-script 'python ~/TDCIS/frequency_sim.py' --frequencies-file d_xyz.txt --vibration-frequency 268.6409 --vibration-amplitude 0.4 --save 1 > output.txt;
+~/TDCIS/tdcis.exe -f input.txt --print-level 1 --sub-levels [1] --initial-state [1,1.0] --field-size 0.0 --simulation-time 8.0 --nuclear-step nuc.txt --nuclear-time 0.1 --function-script 'python ~/TDCIS/frequency_sim.py' --frequencies-file d_xyz.txt --vibration-frequency 268.6409 --vibration-amplitude 0.4 --save 1 > output.txt;
 echo 'done running tdcis';
 echo '';
 echo 'making NEWCUBE Dir';
@@ -21,7 +21,7 @@ echo 'generating cube files';
 echo '--------------------------------------';
 echo '';
 # i loops from 0 to 20 since simulation time is 2 and time step is 0.1
-for i in {0..19}; do for j in {0..1}; do cubegen 1 density=scf MO-matrix-$i-$j.fchk NEWCUBE/MO-matrix-$i-$j.cube -1 h MO-matrix-19-0.cube; done; done;
+for i in {0..79}; do for j in {0..1}; do cubegen 1 density=scf MO-matrix-$i-$j.fchk NEWCUBE/MO-matrix-$i-$j.cube -1 h MO-matrix-79-0.cube; done; done;
 echo 'making DIFFERENCE Dir';
 echo '--------------------------------------';
 cd NEWCUBE;
