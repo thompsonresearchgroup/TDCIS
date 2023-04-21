@@ -17,7 +17,7 @@
 !
       implicit none
       type(mqc_gaussian_unformatted_matrix_file)::fileInfo 
-      character(len=:),allocatable::command,fileName,help_path,nucFile,increment_script,d_xyz
+      character(len=:),allocatable::command,fileName,help_path,nucFile,increment_script,d_xyz,move_nuc
       character(len=256),dimension(:),allocatable::fileList
       character(len=256)::vecString,root_string='',sub_string='',field_string='',&
         pulseShape='rectangle',tcf_file='tcf',file_tmp,ci_string='oci',gauss_exe='$g16root/g16/g16',&
@@ -466,6 +466,10 @@
             read(command,'(F12.6)') vib_amp
             j = i + 2
 
+        elseIf(command.eq.'--move-nuc') then
+            call mqc_get_command_argument(i+1,move_nuc)
+            j = i + 2
+
 !************************
 
 !
@@ -562,7 +566,7 @@
         &',trim(num2char(delta_t)),' ',trim(nucFile),' ',trim(num2char(vib_freq)),' ',trim(num2char(vib_amp))
         CALL execute_command_line(trim(increment_script)//' '//trim(d_xyz)//' &
         &'//trim(num2char(nucStep*nucTime))//' '//trim(num2char(delta_t))//' '//trim(nucFile)//' &
-        &'//trim(num2char(vib_freq))//' '//trim(num2char(vib_amp)))
+        &'//trim(num2char(vib_freq))//' '//trim(num2char(vib_amp))//' '//trim(move_nuc))
         open(newunit=iUnit,file=nucFile,status='old',iostat=io_stat_number)
         if(io_stat_number/=0) then
           call mqc_error('Error opening nuclear update file',6)
@@ -576,10 +580,21 @@
         read(unit=iUnit, fmt=*)
         do j = 1,nAtoms
           read(unit=iUnit, fmt=*, iostat=io_stat_number) newCharge, xCoord, yCoord, zCoord
-          call chargeList%put(newCharge,j)
-          call newGeom%put(xCoord/angPBohr,1,j)
-          call newGeom%put(yCoord/angPBohr,2,j)
-          call newGeom%put(zCoord/angPBohr,3,j)
+           call chargeList%put(newCharge,j)
+           call newGeom%put(xCoord/angPBohr,1,j)
+           call newGeom%put(yCoord/angPBohr,2,j)
+           call newGeom%put(zCoord/angPBohr,3,j)
+
+
+
+       !*****
+         ! call chargeList%put(newCharge,j)
+         ! call newGeom%put(xCoord,1,j)
+         ! call newGeom%put(yCoord,2,j)
+         ! call newGeom%put(zCoord,3,j)
+       !*****
+        
+        
         endDo
       endIf
       close(unit=iUnit)
@@ -2297,9 +2312,9 @@
        endIf
        if(doTwoERIs) then
          write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(conven,skip) geom=nocrowd&
-         & int=noraf nosymm output=matrix'
+         & int=noraff nosymm output=matrix'
        else
-         write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(skip) int=noraf geom=nocrowd&
+         write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(skip) int=noraff geom=nocrowd&
          & nosymm output=matrix'
        endIf
        if(present(route_addition)) write(unitnumber,'(A2,A)') '# ',trim(route_addition)
