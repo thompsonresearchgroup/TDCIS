@@ -214,7 +214,32 @@ OPTIONS
                                           perturbation is slow enough that the wavefunction adapts to stay 
                                           in the same state.
 
-   8. Help 
+   8. Vibration simulation
+      
+      --function-script                File containing script that reads in a file containing dx, dy, dz
+                                       corresponding to the vibration frequency of interest. It then operates 
+                                       on the values of dx, dy, and dz to give new values that it writes to 
+                                       nuc.txt. For usage; type '$python ~/TDCIS/frequency_sim.py --help' with 
+                                       no quotation marks
+                                       The script is written to use the most basic python version
+      
+      --frequencies-file               File containing dx dy and dz values adapted from freq gaussian 
+                                       calculation. Its format is as follows:
+                                       line 1: number of atoms; e.g. 10
+                                       line 2: title; e.g. 2_butene_dx_dy_dz
+                                       line 3: charge, dx, dy, dz; e.g 0.0 -0.0 0.0 -0.0
+                                       line 4 onwards: identical to line 3; line 3 for the first atom 
+
+      --vibration-frequency            This is a real value of the frequency (in wavenumbers) of the 
+                                       vibration mode that you want to simulate
+
+                                       Example is provided for vibration simulation section.
+                                       Its in 'vimExample' and 'run' has all the commands required
+
+      --vibration-amplitude            real value specifying the vibration/rotation displacement
+
+
+   9. Help 
 
       --help                           Output help documentation to terminal.
 

@@ -17,7 +17,7 @@
 !
       implicit none
       type(mqc_gaussian_unformatted_matrix_file)::fileInfo 
-      character(len=:),allocatable::command,fileName,help_path,nucFile
+      character(len=:),allocatable::command,fileName,help_path,nucFile,increment_script,d_xyz,move_nuc
       character(len=256),dimension(:),allocatable::fileList
       character(len=256)::vecString,root_string='',sub_string='',field_string='',&
         pulseShape='rectangle',tcf_file='tcf',file_tmp,ci_string='oci',gauss_exe='$g16root/g16/g16',&
@@ -30,7 +30,7 @@
       integer(kind=int64),allocatable::maxNucSteps
       real(kind=real64)::delta_t=0.1,field_size=0.005,simTime=100.0,t0=0.0,sigma=0.5,omega=10.0,&
         beta=3.0,newCharge,xCoord,yCoord,zCoord,current_time,nucStart=0.0
-      real(kind=real64),allocatable::tcf_start,nucTime
+      real(kind=real64),allocatable::tcf_start,nucTime,increment,vib_freq,vib_amp
       real(kind=real64),parameter::zero_thresh=1.00E-8
       complex(kind=real64)::imag=(0.0,1.0)
       logical::UHF,file_exists,doVelDip=.false.,doDirect=.false.,found,doProcMem=.false.,&
@@ -52,6 +52,7 @@
         td_field_vector,tcf_ci_epsilon,tcf,total_veldip,new_state_coeffs,chargeList
       type(mqc_vector),dimension(3)::dipole_eigvals
       type(mqc_vector),dimension(2)::nRoot
+      character(LEN=200)::cmd
 !
 !*    USAGE
 !*      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--print-veldip] 
@@ -443,13 +444,41 @@
           nucUpdate = command
           call string_change_case(nucUpdate,'l')
           j = i + 2
+
+!************************
+        elseIf(command.eq.'--function-script') then
+           call mqc_get_command_argument(i+1,increment_script)
+            j = i + 2
+
+        elseIf(command.eq.'--frequencies-file') then
+            call mqc_get_command_argument(i+1,d_xyz)
+            j = i + 2
+
+        elseIf(command.eq.'--vibration-frequency') then
+            call mqc_get_command_argument(i+1,command)
+            allocate(vib_freq)
+            read(command,'(F12.6)') vib_freq
+            j = i + 2
+
+        elseIf(command.eq.'--vibration-amplitude') then
+            call mqc_get_command_argument(i+1,command)
+            allocate(vib_amp)
+            read(command,'(F12.6)') vib_amp
+            j = i + 2
+
+        elseIf(command.eq.'--move-nuc') then
+            call mqc_get_command_argument(i+1,move_nuc)
+            j = i + 2
+
+!************************
+
 !
 !*   8. Help 
 !*
         elseIf(command.eq.'--help') then
 !
 !*      --help                           Output help documentation to terminal.
-!*
+!* 
           if(command_argument_count().gt.1) call mqc_error_I('Help output requested with multiple arguments',6, &
             'command_argument_count()',command_argument_count())
           call mqc_get_command_argument(0,help_path)
@@ -512,6 +541,7 @@
         if((stat_num<0).and.(i<=numFile)) call mqc_error('File EOF reached early',iOut)
       endDo
       close(unit=iUnit)
+
 !
 !     Update nuclear potential if necessary.
 !
@@ -527,9 +557,16 @@
       if(allocated(maxNucSteps)) then
         if(maxNucSteps.lt.nNucSteps) nNucSteps = maxNucSteps
       endIf
+      nucloop: do nucStep = 0, nNucSteps
 
+!***
       if(nNucSteps.ge.1) then
         if(.not.allocated(nucFile)) call mqc_error('No nuclear update file provided',6)
+        write(*,*)' ', trim(increment_script),' ',trim(d_xyz),' ',trim(num2char(nucStep*nucTime)),' &
+        &',trim(num2char(delta_t)),' ',trim(nucFile),' ',trim(num2char(vib_freq)),' ',trim(num2char(vib_amp))
+        CALL execute_command_line(trim(increment_script)//' '//trim(d_xyz)//' &
+        &'//trim(num2char(nucStep*nucTime))//' '//trim(num2char(delta_t))//' '//trim(nucFile)//' &
+        &'//trim(num2char(vib_freq))//' '//trim(num2char(vib_amp))//' '//trim(move_nuc))
         open(newunit=iUnit,file=nucFile,status='old',iostat=io_stat_number)
         if(io_stat_number/=0) then
           call mqc_error('Error opening nuclear update file',6)
@@ -543,16 +580,25 @@
         read(unit=iUnit, fmt=*)
         do j = 1,nAtoms
           read(unit=iUnit, fmt=*, iostat=io_stat_number) newCharge, xCoord, yCoord, zCoord
-          call chargeList%put(newCharge,j)
-          call newGeom%put(xCoord/angPBohr,1,j)
-          call newGeom%put(yCoord/angPBohr,2,j)
-          call newGeom%put(zCoord/angPBohr,3,j)
+           call chargeList%put(newCharge,j)
+           call newGeom%put(xCoord/angPBohr,1,j)
+           call newGeom%put(yCoord/angPBohr,2,j)
+           call newGeom%put(zCoord/angPBohr,3,j)
+
+
+
+       !*****
+         ! call chargeList%put(newCharge,j)
+         ! call newGeom%put(xCoord,1,j)
+         ! call newGeom%put(yCoord,2,j)
+         ! call newGeom%put(zCoord,3,j)
+       !*****
+        
+        
         endDo
       endIf
       close(unit=iUnit)
-
-      nucloop: do nucStep = 0, nNucSteps
-        
+!***
         if(nucStep.ge.1) then
           write(iOut,'(1X,A)') repeat('*',50)//NEW_LINE('A')
           write(iOut,'(1X,A)') repeat(' ',12)//'UPDATING NUCLEAR POTENTIAL'//NEW_LINE('A')//NEW_LINE('A')//&
@@ -905,7 +951,7 @@
           write(iOut,'(1X,A,1X,F12.6,1X,A)') 'Time step:',current_time,'au'//NEW_LINE('A')
 
           td_field_vector = get_field_vector(delta_t,(maxsteps*nucStep)+nucStep+i,field_vector,pulseShape,t0,omega,sigma,beta)
-          call td_field_vector%print(6,'Applied field vector',Blank_At_Bottom=.true.,FormatStr='F16.10')
+          call td_field_vector%print(6,'Applied field vector',Blank_At_Bottom=.true.)
 
           if(i.gt.0) then
             state_coeffs = exp((-1)*imag*delta_t*wavefunction%pscf_energies).ewp.state_coeffs
@@ -952,7 +998,7 @@
             call total_dipole%put((-1)*contraction(density,dipole(j)) + nuclear_dipole%at(j),j)
             if(doVelDip) call total_veldip%put((-1)*contraction(density,veldipole(j)) + nuclear_dipole%at(j),j)
           endDo
-          call total_dipole%print(6,'Total dipole',Blank_At_Bottom=.true.,FormatStr='F16.10')
+          call total_dipole%print(6,'Total dipole',Blank_At_Bottom=.true.)
           if(doVelDip) call total_veldip%print(6,'Total velocity gauge dipole',Blank_At_Bottom=.true.)
 
           if(abs(saveDen).gt.0) then
@@ -1406,7 +1452,7 @@
       mo_I_occ = mqc_integral_output_block(mo_I%orbitals('occupied',[int(nAlpha)],[int(nBeta)]),'full') 
       mo_J_occ = mqc_integral_output_block(mo_J%orbitals('occupied',[int(nAlpha)],[int(nBeta)]),'full') 
       
-      mIJ = matmul(dagger(mo_I_occ),matmul(overlap%getBlock('full'),mo_J_occ))
+      mIJ = matmul(matmul(dagger(mo_I_occ),overlap%getBlock('full')),mo_J_occ)
       nIJ = mIJ%det()
 
       orthflag = .false.
@@ -1425,14 +1471,14 @@
             nullSize = nullSize + 1
           endIf
         endDo
+        nullSize = sign(1.0,real(uMat%det()))*sign(1.0,real(vMat%det()))*nullSize
       else
         pnIJ = nIJ
         nullSize = 0
       endIf
 
       if(orthflag) then
-!        call signCheckSVD(uMat,sigmaMat,vMat,int(nAlpha+nBeta)) 
-        nullSize = sign(1.0,real(uMat%det()))*sign(1.0,real(vMat%det()))*nullSize
+        call signCheckSVD(uMat,sigmaMat,vMat,int(nAlpha+nBeta)) 
         tmoI = matmul(dagger(uMat),dagger(mo_I_occ))
         tmoJ = matmul(mo_J_occ,dagger(vMat))
         call rhoMat%init(int(nBasis)*2,int(nBasis)*2)
@@ -1683,8 +1729,6 @@
       endIf
       core_con = mqc_scf_integral_contraction(rho(2),coreham)
       gmat_con = mqc_scf_integral_contraction(rho(2),fMat-coreHam)
-!      call core_con%print(6,'Core Hamiltonian + Density contraction')
-!      call gmat_con%print(6,'G Matrix + Density  contraction <P1G(P2)>')
 
       if(abs(nullSize).gt.0) then
         if(abs(nullSize).eq.1) then
@@ -1725,7 +1769,6 @@
 
       if(abs(nullSize).lt.2) then
         dIJ = pnij*contraction(rho,oneElInt)
-        if(abs(nullSize).gt.0) dij = sign(1.0,nullSize)*dij
       else
         dIJ = zero
       endIf
@@ -1862,8 +1905,8 @@
       do i = 1, numFile
         do j = 1, i
           call get_rhos(rho,nIJ,pnIJ,nullSize,mo_list(i),mo_list(j),overlap,nBasis,nAlpha,nBeta)
-          if(abs(nullSize).ge.2) cycle
-          weight = sign(1.0,nullSize)*eigenvecs%at(i)*pnIJ*conjg(eigenvecs%at(j))
+          if(nullSize.ge.2) cycle
+          weight = eigenvecs%at(i)*pnIJ*conjg(eigenvecs%at(j))
           oneDMmat = oneDMmat + weight*rho(2)%getBlock('full')
           if(i.ne.j) oneDMmat = oneDMmat + conjg(weight)*dagger(rho(2)%getBlock('full'))
         endDo
@@ -2268,9 +2311,11 @@
          geomcmd = 'geom=allcheck'
        endIf
        if(doTwoERIs) then
-         write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(conven,skip) int=noraf nosymm output=matrix'
+         write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(conven,skip) geom=nocrowd&
+         & int=noraff nosymm output=matrix'
        else
-         write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(skip) int=noraf nosymm output=matrix'
+         write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(skip) int=noraff geom=nocrowd&
+         & nosymm output=matrix'
        endIf
        if(present(route_addition)) write(unitnumber,'(A2,A)') '# ',trim(route_addition)
        write(unitnumber,'(A)') ''

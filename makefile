@@ -1,4 +1,4 @@
-mqcroot = "$(HOME)/.mqc"
+mqcroot = "$(HOME)/mqcPack"
 FC = gfortran
 ifeq ($(FC),gfortran)
 	FCFLAGS = -std=f2008 -fdefault-real-8 -fdefault-integer-8 -fopenmp

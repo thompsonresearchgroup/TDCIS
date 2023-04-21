@@ -1,0 +1,35 @@
+
+ *************************************************************************
+  Real-Time Truncated Configuration Interaction Time Evolution Calculator
+ *************************************************************************
+
+                              Version 22.1.1
+
+ L. M. Thompson, A. M. Kinyua, Louisville KY, 2022.
+
+ Defaulting to t=0 field aligned along z-axis.
+
+ ############################################
+ #                                          #
+ #            INITIAL CONDITIONS            #
+ #            ------------------            #
+ #                                          #
+ # 1) Simulation time:        8.000000 au   #
+ # 2) Number of steps:              80      #
+ # 3) Time step:              0.100000 au   #
+ # 4) State weights:                        #
+ #                          1 = 1.0000      #
+ # 5) Field parameters:                     #
+ #    Pulse shape:           rectangle      #
+ #    Magnitude:              0.000000 au   #
+ #    Field X:                0.000000      #
+ #    Field Y:                0.000000      #
+ #    Field Z:                0.000000      #
+ #    t0:                     0.000000      #
+ #    omega:                 10.000000      #
+ #    sigma:                  0.500000      #
+ #    beta:                   3.000000      #
+ #                                          #
+ ############################################
+ 
+  python ~/TDCIS/frequency_sim.py d_xyz.txt 0.00000 0.10000 nuc.txt 268.64090 0.40000
