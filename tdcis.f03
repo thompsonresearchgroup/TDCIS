@@ -706,10 +706,10 @@
             Wavefunction%nBeta,Wavefunction%nElectrons,activeList,inactiveList,alphaList,betaList)
           if(iPrint.ge.1) then
             write(iOut,'(1X,A)') 'Building Determinant Strings'
-            call mqc_print(6,activeList,'Active orbitals')
-            call mqc_print(6,inactiveList,'Core orbitals')
-            call mqc_print(6,alphaList,'Active alpha electrons')
-            call mqc_print(6,betaList,'Active beta electrons')
+            call mqc_print(activeList,6,'Active orbitals')
+            call mqc_print(inactiveList,6,'Core orbitals')
+            call mqc_print(alphaList,6,'Active alpha electrons')
+            call mqc_print(betaList,6,'Active beta electrons')
           endIf
           call gen_det_str(iOut,iPrint,activeList(1),alphaList(1),betaList(1),determinants,inactiveList(1))
           nCore = inactiveList(1)
@@ -1511,7 +1511,7 @@
         else
           theta1 = zero
         endIf
-        exp1 = cmplx(cos(theta1),sin(theta1))
+        exp1 = MQC_Scalar_Cmplx(cos(theta1),sin(theta1))
         if(abs(aimag(exp1)).le.zero) exp1 = real(exp1)
         call U%vput(exp1*U%vat([0],[k]),[0],[k])
         if(present(S).and.present(Vdag)) then
@@ -1528,7 +1528,7 @@
             else
               theta1 = zero
             endIf
-            exp1 = cmplx(cos(theta1),sin(theta1))
+            exp1 = MQC_Scalar_Cmplx(cos(theta1),sin(theta1))
             if(abs(aimag(exp1)).le.zero) exp1 = real(exp1)
             call Vdag%vput(dagger(exp1*dagger(Vdag%vat([k],[0]))),[k],[0])
           endIf
