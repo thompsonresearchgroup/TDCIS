@@ -17,7 +17,7 @@
 !
       implicit none
       type(mqc_gaussian_unformatted_matrix_file)::fileInfo 
-      character(len=:),allocatable::command,fileName,help_path,nucFile
+      character(len=:),allocatable::command,fileName,help_path,nucFile,increment_script
       character(len=256),dimension(:),allocatable::fileList
       character(len=256)::vecString,root_string='',sub_string='',field_string='',&
         pulseShape='rectangle',tcf_file='tcf',file_tmp,ci_string='oci',gauss_exe='$g16root/g16/g16',&
@@ -444,6 +444,16 @@
           call string_change_case(nucUpdate,'l')
           j = i + 2
 !
+!*      --function-script filename       Name of script that overwrites the nuclear step file. The script will
+!*                                       be expected to accept command line the arguments (in order) nuclear 
+!*                                       step filename and current time. This option allows nonlinear changes 
+!*                                       to the nuclear motion to be modelled (e.g. molecular vibrations). See
+!*                                       frequency_sim.py for an example of how the script should be written.
+!*
+        elseIf(command.eq.'--nucInc-script') then
+           call mqc_get_command_argument(i+1,increment_script)
+            j = i + 2
+!
 !*   8. Help 
 !*
         elseIf(command.eq.'--help') then
@@ -528,31 +538,34 @@
         if(maxNucSteps.lt.nNucSteps) nNucSteps = maxNucSteps
       endIf
 
-      if(nNucSteps.ge.1) then
-        if(.not.allocated(nucFile)) call mqc_error('No nuclear update file provided',6)
-        open(newunit=iUnit,file=nucFile,status='old',iostat=io_stat_number)
-        if(io_stat_number/=0) then
-          call mqc_error('Error opening nuclear update file',6)
-        endIf
-        read(unit=iUnit, fmt='(i2)', iostat=io_stat_number) nAtoms
-        if(nAtoms/=fileInfo%getVal('natoms',filename=fileList(1))) &
-          call mqc_error_i('Import of nuclear change failed',6,'atoms on file',&
-          nAtoms,'atoms on disk',MQC_Scalar_Get_Intrinsic_Integer(moleculeInfo%getNumAtoms()))
-        call newGeom%init(3,nAtoms)
-        call chargeList%init(nAtoms)
-        read(unit=iUnit, fmt=*)
-        do j = 1,nAtoms
-          read(unit=iUnit, fmt=*, iostat=io_stat_number) newCharge, xCoord, yCoord, zCoord
-          call chargeList%put(newCharge,j)
-          call newGeom%put(xCoord/angPBohr,1,j)
-          call newGeom%put(yCoord/angPBohr,2,j)
-          call newGeom%put(zCoord/angPBohr,3,j)
-        endDo
-      endIf
-      close(unit=iUnit)
 
       nucloop: do nucStep = 0, nNucSteps
         
+        if(nNucSteps.ge.1) then
+          if(.not.allocated(nucFile)) call mqc_error('No nuclear update file provided',6)
+          if(allocated(increment_script)) call execute_command_line(trim(increment_script)//' '//&
+            trim(nucFile)//' '//trim(num2char(nucStep*nucTime)))
+          open(newunit=iUnit,file=nucFile,status='old',iostat=io_stat_number)
+          if(io_stat_number/=0) then
+            call mqc_error('Error opening nuclear update file',6)
+          endIf
+          read(unit=iUnit, fmt='(i2)', iostat=io_stat_number) nAtoms
+          if(nAtoms/=fileInfo%getVal('natoms',filename=fileList(1))) &
+            call mqc_error_i('Import of nuclear change failed',6,'atoms on file',&
+            nAtoms,'atoms on disk',MQC_Scalar_Get_Intrinsic_Integer(moleculeInfo%getNumAtoms()))
+          call newGeom%init(3,nAtoms)
+          call chargeList%init(nAtoms)
+          read(unit=iUnit, fmt=*)
+          do j = 1,nAtoms
+            read(unit=iUnit, fmt=*, iostat=io_stat_number) newCharge, xCoord, yCoord, zCoord
+            call chargeList%put(newCharge,j)
+            call newGeom%put(xCoord/angPBohr,1,j)
+            call newGeom%put(yCoord/angPBohr,2,j)
+            call newGeom%put(zCoord/angPBohr,3,j)
+          endDo
+        endIf
+        close(unit=iUnit)
+
         if(nucStep.ge.1) then
           write(iOut,'(1X,A)') repeat('*',50)//NEW_LINE('A')
           write(iOut,'(1X,A)') repeat(' ',12)//'UPDATING NUCLEAR POTENTIAL'//NEW_LINE('A')//NEW_LINE('A')//&
@@ -564,7 +577,7 @@
               .false.,(i.eq.1.and..not.doDirect),atomList,angPBohr*(moleculeInfo%Cartesian_Coordinates+NewGeom),&
               int(wavefunction%charge),int(wavefunction%multiplicity),moleculeInfo%Nuclear_Charges+chargeList)
           endDo
-          call EXECUTE_COMMAND_LINE(gauss_exe//' nuclear_update_temp.com',exitstat=exit_stat_number,&
+          call EXECUTE_COMMAND_LINE(trim(gauss_exe)//' nuclear_update_temp.com',exitstat=exit_stat_number,&
             cmdstat=cmd_stat_number,cmdmsg=command_message)
           if(exit_stat_number/=0) then
             call mqc_error_i('Error executing Gaussian calculation',6,'exit flag',exit_stat_number)
@@ -706,10 +719,10 @@
             Wavefunction%nBeta,Wavefunction%nElectrons,activeList,inactiveList,alphaList,betaList)
           if(iPrint.ge.1) then
             write(iOut,'(1X,A)') 'Building Determinant Strings'
-            call mqc_print(6,activeList,'Active orbitals')
-            call mqc_print(6,inactiveList,'Core orbitals')
-            call mqc_print(6,alphaList,'Active alpha electrons')
-            call mqc_print(6,betaList,'Active beta electrons')
+            call mqc_print(activeList,6,'Active orbitals')
+            call mqc_print(inactiveList,6,'Core orbitals')
+            call mqc_print(alphaList,6,'Active alpha electrons')
+            call mqc_print(betaList,6,'Active beta electrons')
           endIf
           call gen_det_str(iOut,iPrint,activeList(1),alphaList(1),betaList(1),determinants,inactiveList(1))
           nCore = inactiveList(1)
@@ -853,7 +866,7 @@
 !       Diagonalize the dipole moment matrix to get transformation matrix U
 !
         do i = 1, 3
-          if(iPrint.eq.1) write(iOut,'(1X,A)') 'Diagonalizing SD dipole axis '//trim(num2char(i))//NEW_LINE('A')
+          if(iPrint.ge.1) write(iOut,'(1X,A)') 'Diagonalizing SD dipole axis '//trim(num2char(i))//NEW_LINE('A')
           if (ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
             call CI_Dipole(i)%diag(dipole_eigvals(i),dipole_eigvecs(i))
           elseIf(ci_string.eq.'noci') then
@@ -929,7 +942,7 @@
           endIf
 
           final_energy = get_CI_Energy(CI_Hamiltonian,td_ci_coeffs) 
-          if(iPrint.ge.1.or.i.eq.maxsteps) call final_energy%print(6,'Energy (au)',Blank_At_Bottom=.true.,&
+          if(iPrint.ge.0.or.i.eq.maxsteps) call final_energy%print(6,'Energy (au)',Blank_At_Bottom=.true.,&
             FormatStr='F14.8')
 
           if(iPrint.ge.1.or.i.eq.maxsteps) call mqc_print(state_coeffs.outer.transpose(state_coeffs),6,'State Density matrix', &
@@ -1035,7 +1048,12 @@
         endIf
       case('continuous')
         if(dt*step.ge.t0.and.dt*step.lt.t0+sigma) then
-          td_field = static_field*sin(omega*(dt*step-t0))
+          if((dt*step-t0).le.(5*(2*pi/omega))) then 
+            td_field = static_field*cos(omega*(dt*step-t0))*&
+            (((dt*step-t0)*omega)/(5*2*pi))
+          else
+            td_field = static_field*cos(omega*(dt*step-t0))
+          endIf
         else
           td_field = [0.0,0.0,0.0]
         endIf
@@ -1048,7 +1066,7 @@
       case('cos squared')
         if(dt*step.ge.t0.and.dt*step.lt.t0+2*sigma) then
           td_field = static_field*(cos((pi/(2*sigma))*(sigma-dt*step+t0)))**2*&
-            sin(omega*(dt*step-t0))
+            cos(omega*(dt*step-t0))
         else
           td_field = [0.0,0.0,0.0]
         endIf
@@ -1511,7 +1529,7 @@
         else
           theta1 = zero
         endIf
-        exp1 = cmplx(cos(theta1),sin(theta1))
+        exp1 = mqc_scalar_cmplx(cos(theta1),sin(theta1))
         if(abs(aimag(exp1)).le.zero) exp1 = real(exp1)
         call U%vput(exp1*U%vat([0],[k]),[0],[k])
         if(present(S).and.present(Vdag)) then
@@ -1528,7 +1546,7 @@
             else
               theta1 = zero
             endIf
-            exp1 = cmplx(cos(theta1),sin(theta1))
+            exp1 = mqc_scalar_cmplx(cos(theta1),sin(theta1))
             if(abs(aimag(exp1)).le.zero) exp1 = real(exp1)
             call Vdag%vput(dagger(exp1*dagger(Vdag%vat([k],[0]))),[k],[0])
           endIf
@@ -1935,6 +1953,7 @@
       call temp_file%writeArray('CONTRACTION COEFFICIENTS',conCoef)
       call temp_file%writeArray('P(S=P) CONTRACTION COEFFICIENTS',conCoTwo)
       call temp_file%writeArray('COORDINATES OF EACH SHELL',shCoor)
+      call temp_file%writeESTObj('overlap',est_integral=wavefunction%overlap_matrix,override=spinSymStr)
       call temp_file%writeESTObj('mo energies',est_eigenvalues=wavefunction%mo_energies,override=spinSymStr)
       call temp_file%writeESTObj('mo coefficients',est_integral=wavefunction%mo_coefficients,&
         override=spinSymStr,imagORide=compSpinStr)
@@ -2268,9 +2287,11 @@
          geomcmd = 'geom=allcheck'
        endIf
        if(doTwoERIs) then
-         write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(conven,skip) int=noraf nosymm output=matrix'
+         write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(conven,skip) geom=nocrowd &
+           &int=noraf nosymm output=matrix'
        else
-         write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(skip) int=noraf nosymm output=matrix'
+         write(unitnumber,'(A,A,A)') '#P hf guess=read '//trim(geomcmd)//' scf=(skip) geom=nocrowd &
+           &int=noraf nosymm output=matrix'
        endIf
        if(present(route_addition)) write(unitnumber,'(A2,A)') '# ',trim(route_addition)
        write(unitnumber,'(A)') ''

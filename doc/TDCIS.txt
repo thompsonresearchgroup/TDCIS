@@ -214,6 +214,12 @@ OPTIONS
                                           perturbation is slow enough that the wavefunction adapts to stay 
                                           in the same state.
 
+      --function-script filename       Name of script that overwrites the nuclear step file. The script will
+                                       be expected to accept command line the arguments (in order) nuclear 
+                                       step filename and current time. This option allows nonlinear changes 
+                                       to the nuclear motion to be modelled (e.g. molecular vibrations). See
+                                       frequency_sim.py for an example of how the script should be written.
+
    8. Help 
 
       --help                           Output help documentation to terminal.
@@ -235,6 +241,7 @@ NOTES
 
     AUTHORS
       Lee M. Thompson, University of Louisville, lee.thompson.1@lousiville.edu
+      Adam M. Kinyua, University of Louisville, adam.kinyua@lousiville.edu
 COPYRIGHT
       (c) 2021 by Lee M. Thompson distributed under terms of the MIT license.
 
