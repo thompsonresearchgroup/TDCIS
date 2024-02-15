@@ -576,7 +576,7 @@
               .false.,(i.eq.1.and..not.doDirect),atomList,angPBohr*(moleculeInfo%Cartesian_Coordinates+NewGeom),&
               int(wavefunction%charge),int(wavefunction%multiplicity),moleculeInfo%Nuclear_Charges+chargeList)
           endDo
-          call EXECUTE_COMMAND_LINE(gauss_exe//' nuclear_update_temp.com',exitstat=exit_stat_number,&
+          call EXECUTE_COMMAND_LINE(trim(gauss_exe)//' nuclear_update_temp.com',exitstat=exit_stat_number,&
             cmdstat=cmd_stat_number,cmdmsg=command_message)
           if(exit_stat_number/=0) then
             call mqc_error_i('Error executing Gaussian calculation',6,'exit flag',exit_stat_number)
@@ -865,7 +865,7 @@
 !       Diagonalize the dipole moment matrix to get transformation matrix U
 !
         do i = 1, 3
-          if(iPrint.eq.1) write(iOut,'(1X,A)') 'Diagonalizing SD dipole axis '//trim(num2char(i))//NEW_LINE('A')
+          if(iPrint.ge.1) write(iOut,'(1X,A)') 'Diagonalizing SD dipole axis '//trim(num2char(i))//NEW_LINE('A')
           if (ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
             call CI_Dipole(i)%diag(dipole_eigvals(i),dipole_eigvecs(i))
           elseIf(ci_string.eq.'noci') then
