@@ -447,7 +447,8 @@
 !*      --function-script filename       Name of script that overwrites the nuclear step file. The script will
 !*                                       be expected to accept command line the arguments (in order) nuclear 
 !*                                       step filename and current time. This option allows nonlinear changes 
-!*                                       to the nuclear motion to be modelled (e.g. molecular vibrations).  
+!*                                       to the nuclear motion to be modelled (e.g. molecular vibrations). See
+!*                                       frequency_sim.py for an example of how the script should be written.
 !*
         elseIf(command.eq.'--nucInc-script') then
            call mqc_get_command_argument(i+1,increment_script)
