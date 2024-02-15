@@ -44,12 +44,36 @@ for (my $i=1; $i<=$nOcc; $i++){
         	print GJF "%oldchk=$curdir/$chkfile\n";
         	print GJF "%chk=$curdir/$gjf.chk\n";
         	print GJF "#P uhf chkbas guess=(read,alter) geom=check output=matrixelement\n";
-        	print GJF "# IOp(5/200=3) scf=(conver=10,novaracc,maxcycles=250,fermi) nosymm\n\n";
+#        	print GJF "# IOp(5/10=1000,5/194=4,5/200=0) scf=(conver=8,novaracc,maxcycles=250,fermi) nosymm\n\n";
+        	print GJF "# IOp(5/200=3) scf=(conver=12,novaracc,maxcycles=250,fermi) nosymm\n\n";
+#        	print GJF "# scf=skip nosymm\n\n";
         	print GJF "NOCIS orbital swap. Occ = $i, Virt = $j\n\n";
         	print GJF "0 1\n\n";
         	printf GJF "$i $j\n\n\n";
         	print GJF "$curdir/$gjf.mat\n\n";
         	close GJF;
+	}
+}
+
+for (my $i=1; $i<=$nOcc; $i++){
+	for (my $k=1; $k<=$nOcc; $k++){
+		for (my $j=$nOcc+1; $j<=$nOcc+$nVirt; $j++){
+			for (my $l=$nOcc+1; $l<=$nOcc+$nVirt; $l++){
+        			my $gjf = "nocis_alter_$i"."_$k"."_$j"."_$l";
+        			open  (GJF,">$gjf.com") or die "Could not create $gjf.\n";
+        			print GJF "%oldchk=$curdir/$chkfile\n";
+        			print GJF "%chk=$curdir/$gjf.chk\n";
+        			print GJF "#P uhf chkbas guess=(read,alter) geom=check output=matrixelement\n";
+#        			print GJF "# IOp(5/200=3) scf=(conver=12,novaracc,maxcycles=250,fermi) nosymm\n\n";
+        			print GJF "# scf=skip nosymm\n\n";
+        			print GJF "NOCIS orbital swap. Occ = $i/$k, Virt = $j/$l\n\n";
+        			print GJF "0 1\n\n";
+        			printf GJF "$i $j\n\n";
+        			printf GJF "$k $l\n\n";
+        			print GJF "$curdir/$gjf.mat\n\n";
+        			close GJF;
+			}
+		}
 	}
 }
 
