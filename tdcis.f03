@@ -754,7 +754,7 @@
           call subs%unshift(0)
           isubs = subs
           call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
-            mo_core_ham,mo_ERIs,UHF,CI_Hamiltonian,isubs)
+            mo_core_ham,mo_ERIs,CI_Hamiltonian,isubs)
           if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
           if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI dipole matrices'
           do i = 1, 3
@@ -763,7 +763,7 @@
             if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)),&
               Blank_At_Bottom=.true.)
             call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
-              dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i),subs=isubs)
+              dipoleMO(i),CI_Hamiltonian=CI_Dipole(i),subs=isubs)
             if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)),&
               Blank_At_Bottom=.true.)
             call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
@@ -774,7 +774,7 @@
         elseIf(ci_string.eq.'ocas') then
           if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
           call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
-            mo_core_ham,mo_ERIs,UHF,CI_Hamiltonian)
+            mo_core_ham,mo_ERIs,CI_Hamiltonian)
           if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
           if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI dipole matrices'
           do i = 1, 3
@@ -783,7 +783,7 @@
             if(iprint.ge.4) call dipoleMO(i)%print(6,'MO dipole integrals axis '//trim(num2char(i)),&
               Blank_At_Bottom=.true.)
             call mqc_build_ci_hamiltonian(iOut,iPrint,wavefunction%nBasis-nVirt,determinants, &
-              dipoleMO(i),UHF=UHF,CI_Hamiltonian=CI_Dipole(i))
+              dipoleMO(i),CI_Hamiltonian=CI_Dipole(i))
             if(iprint.ge.4) call CI_Dipole(i)%print(6,'SD dipole integrals axis '//trim(num2char(i)),&
               Blank_At_Bottom=.true.)
             call iden%identity(size(CI_Dipole(i),1),size(CI_Dipole(i),2),nuclear_dipole%at(i))
@@ -941,7 +941,11 @@
             if(current_time.ge.tcf_start) call tcf%push(dot_product(dagger(tcf_ci_epsilon),td_ci_coeffs/td_ci_coeffs%norm()))
           endIf
 
-          final_energy = get_CI_Energy(CI_Hamiltonian,td_ci_coeffs) 
+          if(ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
+            final_energy = get_CI_Energy(CI_Hamiltonian,td_ci_coeffs) 
+          elseIf(ci_string.eq.'noci') then
+            final_energy = get_CI_Energy(CI_Hamiltonian,td_ci_coeffs,CI_Overlap)
+          endIf
           if(iPrint.ge.0.or.i.eq.maxsteps) call final_energy%print(6,'Energy (au)',Blank_At_Bottom=.true.,&
             FormatStr='F14.8')
 
@@ -1008,14 +1012,20 @@
 !
 !     get_CI_energy is a function that returns the energy given the Hamiltonian and CI vectors.
 !
-      function get_CI_Energy(CI_Hamiltonian,CI_vectors) result(energy)
+      function get_CI_Energy(CI_Hamiltonian,CI_vectors,CI_Overlap) result(energy)
 
       implicit none
       type(mqc_matrix),intent(in)::CI_Hamiltonian
       type(mqc_vector),intent(in)::CI_Vectors
+      type(mqc_matrix),optional,intent(in)::CI_Overlap
       type(mqc_scalar)::energy
 
-      energy = dot_product(matmul(dagger(CI_vectors),CI_Hamiltonian),CI_vectors)
+      if(present(CI_Overlap)) then
+        energy = dot_product(matmul(dagger(CI_vectors),CI_Hamiltonian),CI_vectors)
+        energy = energy/dot_product(matmul(dagger(CI_vectors),CI_Overlap),CI_vectors)
+      else
+        energy = dot_product(matmul(dagger(CI_vectors),CI_Hamiltonian),CI_vectors)
+      endIf
 
       end function get_CI_energy
 !

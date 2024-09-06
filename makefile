@@ -1,5 +1,5 @@
 mqcroot = "$(HOME)/.mqc"
-blalibs = mkl
+blalibs = blalap
 FC = gfortran
 ifeq ($(blalibs),blalap)
   ifeq ($(FC),gfortran)
