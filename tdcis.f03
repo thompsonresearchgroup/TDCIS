@@ -2,7 +2,7 @@
 !
 !     This program perfoms a real-time time-dependent truncated CI calculation.
 !
-!     L. M. Thompson, 2021
+!     L. M. Thompson, 2021 
 !
       use mqc_gaussian
       use iso_fortran_env, only: int32, int64, real64
