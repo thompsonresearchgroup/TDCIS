@@ -1881,21 +1881,26 @@
 
 !     subroutine variables
       type(mqc_scf_integral),dimension(2)::rho
-      type(mqc_scalar)::nIJ,pnIJ,weight
+      type(mqc_scalar)::nIJ,pnIJ,weight,S_A
       integer(kind=int64)::nullSize
-      type(mqc_matrix)::oneDMmat,tMat1,tMat2,tMat3,tMat4
+      type(mqc_matrix)::oneDMmat,tMat1,tMat2,tMat3,tMat4,nMat
       integer::i,j
 !
       call oneDMmat%init(int(nBasis)*2,int(nBasis)*2)
+      call nMat%init(numFile,numFile)
       do i = 1, numFile
         do j = 1, i
           call get_rhos(rho,nIJ,pnIJ,nullSize,mo_list(i),mo_list(j),overlap,nBasis,nAlpha,nBeta)
+          call nMat%put(nIJ,i,j)
+          if(i.ne.j) call nMat%put(nIJ,j,i)
           if(abs(nullSize).ge.2) cycle
           weight = sign(1.0,nullSize)*eigenvecs%at(i)*pnIJ*conjg(eigenvecs%at(j))
           oneDMmat = oneDMmat + weight*rho(2)%getBlock('full')
           if(i.ne.j) oneDMmat = oneDMmat + conjg(weight)*dagger(rho(2)%getBlock('full'))
         endDo
       endDo
+      S_A = dot_product(matmul(dagger(eigenvecs),nMat),eigenvecs)
+      oneDMmat = oneDMmat/S_A
       tmat1 = oneDMmat%mat([1,int(nBasis)],[1,int(nBasis)])
       tmat2 = oneDMmat%mat([int(nBasis)+1,int(nBasis)*2],[int(nBasis+1),int(nBasis)*2])
       tmat3 = oneDMmat%mat([int(nBasis)+1,int(nBasis)*2],[1,int(nBasis)])
@@ -1906,7 +1911,7 @@
       elseIf(tMat3%norm().lt.1.0e-14.and.tMat4%norm().lt.1.0e-14) then
         call mqc_integral_allocate(oneDM,'','spin',tMat1,tMat2)
       else
-        call mqc_integral_allocate(oneDM,'','general',tMat1,tMat2,tMat4,tMat3)
+        call mqc_integral_allocate(oneDM,'','general',tMat1,tMat2,tMat3,tMat4)
       endIf
 !
       end function get_noci_density
