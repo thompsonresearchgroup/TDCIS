@@ -1,6 +1,6 @@
       program tdCIS 
 !
-!     This program perfoms a real-time time-dependent truncated CI calculation.
+!     This program perfoms a real-time time-dependent truncated CI calculation. 
 !
 !     L. M. Thompson, 2021 
 !
