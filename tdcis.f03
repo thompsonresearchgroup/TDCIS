@@ -78,6 +78,21 @@ program tdCIS
       real(kind=real64) :: omp_start_time, omp_end_time
 
 !
+!*    USAGE
+!*      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--print-veldip] 
+!*        [--sub-levels <substitutions>] [--core-orbitals <core-orbitals>] 
+!*        [--virt-orbitals <virt-orbitals>] [--active-space <active_space>] [--alter <alter_list>] 
+!*        [--ci-type <type_string>] [--direct] [--gauss-exe <gaussian_executable_string>] 
+!*        [--do-proc-mem] [--mem <mem>] [--ncpu <ncpu>] [--keep-inters] 
+!*        [--intial-state <weight_vector>] [--pulse-shape <pulse>] [--field-vector <field_vector>] 
+!*        [--field-size <magnitude>] [--t0 <time>] [--omega <frequency>] [--sigma <width>] 
+!*        [--beta <shift>] [--tcf-start <time>] [--time-step <time_step>] [--simulation-time <time>] 
+!*        [--save <steps>] [--nuclear-step <update_file>] [--nuclear-time <time>] 
+!*        [--nuclear_start <time>] [--maxNucSteps <steps>] [--nuclear-update <method>] [--help]
+!*
+!*    OPTIONS
+!* 
+!
 !     Print program information.
 !
       write(IOut,'(*(A))') NEW_LINE('a'),' ',repeat('*',73),NEW_LINE('a'), &
@@ -96,148 +111,403 @@ program tdCIS
 !
 !     Parse input options.
 !
+!*   1. Input/output
+!*
       j = 1
       do i=1,command_argument_count()
         if(i.ne.j) cycle
         call mqc_get_command_argument(i,command)
         if(command.eq.'-f') then
+!
+!*      -f matrix_file                   Input matrix file with initial set of molecular orbitals. 
+!*                                       The first line contains the number of matrix files in the 
+!*                                       input, and then on each line is a separate matrix file.
+!*
           call mqc_get_command_argument(i+1,fileName)
           j = i+2
         elseif(command.eq.'--print-level') then
+!
+!*      --print-level print_level        Verbosity of output. Default print level is 1. Options
+!*                                       0-4.
+!*
           call mqc_get_command_argument(i+1,command)
           read(command,'(I1)') iPrint
           j = i + 2
         elseif(command.eq.'--print-veldip') then
+!
+!*      --print-veldip                   Compute and print the velocity gauge dipole along with the
+!*                                       length gauge dipole.
+!*
           doVelDip=.true.
           j = i + 1
+!
+!*   2. Determinant expansion 
+!*
         elseIf(command.eq.'--sub-levels') then
+!
+!*      --sub-levels substitutions       Substitution levels permitted in truncated CI calculation. 
+!*                                       The default is all single substitutions.
+!*
+!*                                       Example: [1,2] specifies single and double substitutions.
+!*
           call mqc_get_command_argument(i+1,command)
           sub_string = command
           j = i+2
         elseIf(command.eq.'--core-orbitals') then
+!
+!*      --core-orbitals core-orbitals    Number of occupied orbitals to exclude from the truncated 
+!*                                       CI determinant expansion.
+!*
           call mqc_get_command_argument(i+1,command)
           read(command,'(I3)') nCore
           j = i+2
         elseIf(command.eq.'--virt-orbitals') then
+!
+!*      --virt-orbitals virt-orbitals    Number of virtual orbitals to exclude from the truncated 
+!*                                       CI determinant expansion.
+!*
           call mqc_get_command_argument(i+1,command)
           read(command,'(I3)') nVirt
           j = i+2
         elseIf(command.eq.'--active-space') then
+!
+!*      --active-space active_space      Defines orbital space in which to construct initial basis
+!*                                       determinant expansion through orbital swaps. For each input
+!*                                       solution the number of electrons and orbitals in the active
+!*                                       space should be specified.
+!*
+!*                                       Example: [4,4:3,6] specifies an expansion of four electrons
+!*                                       in four orbitals in the first input orbitals and an
+!*                                       expansion of three electrons in six orbitals in the second
+!*                                       input orbitals.
+!*
           call mqc_get_command_argument(i+1,command)
           activeSpace = command
           j = i+2
         elseIf(command.eq.'--alter') then
+!
+!*      --alter alter_list               Changes the order of orbitals in the input molecular
+!*                                       orbitals. Alterations to each input orbitals should be
+!*                                       colon separated and the two orbital numbers to be swapped
+!*                                       should be separated by a if two alpha orbitals will be
+!*                                       swapped, or b if two beta orbitals will be swapped.
+!*                                       Different orbital swaps should be comma separated.
+!*
+!*                                       Example: [3a4,2b4:5a6] swaps alpha orbitals 3 and 4 and
+!*                                       beta orbitals 2 and 4 in input orbitals 1, and swaps alpha
+!*                                       orbitals 5 and 6 in input orbitals 2.
+!*
           call mqc_get_command_argument(i+1,command)
           alterations = command
           j = i+2
         elseIf(command.eq.'--ci-type') then
+!
+!*      --ci-type type_string            Specifies the type of configuration interaction. Options
+!*                                       are:
+!*                                       1) oci (default)
+!*                                          Perform orthogonal configuration interaction with 
+!*                                          determinant expansion specified by sub-levels option.
+!*                                          Only one matrix file should be specified in the input 
+!*                                          file is expected and additional inputs will result in 
+!*                                          an error.
+!*                                       2) ocas
+!*                                          Perform orthogonal complete active space determinant 
+!*                                          expansion specified by active-space option. Only one 
+!*                                          matrix file should be specified in the input file is 
+!*                                          expected and additional inputs will result in an 
+!*                                          error.
+!*                                       3) noci
+!*                                          Perform nonorthogonal configuration interaction with 
+!*                                          determinant expansion specified by matrix files 
+!*                                          listed in input file.
+!*                                       4) hci (not yet implemented)
+!*                                          Perform a hybrid configuration determinant expansion.
+!*                                          That is, an orthogonal truncated configuration 
+!*                                          interaction determinant expansion on molecular 
+!*                                          orbitals in each matrix file in the input file, which 
+!*                                          generally leads to mixed orthogonal and nonorthogonal 
+!*                                          determinants. Substitution levels are specified by 
+!*                                          sub-levels option.
+!*                                       5) hcas (not yet implemented)
+!*                                          Perform a hybrid complete active space determinant 
+!*                                          expansion. That is, an orthogonal complete active 
+!*                                          space determinant expansion on molecular orbitals in 
+!*                                          each matrix file in the input file, which generally 
+!*                                          leads to mixed orthogonal and nonorthogonal 
+!*                                          determinants. Active spaces are specified by active-
+!*                                          space option.
+!*
           call mqc_get_command_argument(i+1,command)
           ci_string = command
           j = i+2
+!
+!*   3. Hamiltonian matrix construction
+!*
         elseif(command.eq.'--direct') then
+!
+!*      --direct                         Avoid the use of 2ERIs in nonorthogonal code. Gaussian 
+!*                                       is required if requested.
+!*
           doDirect=.true.
           j = i + 1
         elseIf(command.eq.'--gauss-exe') then
+!
+!*      --gauss-exe gaussian_executable  Path, executable and command line flags for Gaussian
+!*                                       executable used when running Gaussian jobs from within
+!*                                       the program.
+!*
           call mqc_get_command_argument(i+1,command)
           gauss_exe = command
           j = i+2
         elseIf(command.eq.'--do-proc-mem') then
+!
+!*      --do-proc-mem                    Request %mem and %nproc lines be added to the output
+!*                                       Gaussian input files if doing direct matrix elements.
+!*
           doProcMem = .true.
           j = i+1
         elseIf(command.eq.'--mem') then
+!
+!*      --mem mem                        Amount of memory to be included in %mem output to
+!*                                       Gaussian input files. --do-proc-mem must be set.
+!*                                       Default is 8GB. Note input is not checked for validity.
+!*
           call mqc_get_command_argument(i+1,command)
           mem = command
           j = i+2
         elseIf(command.eq.'--nproc') then
+!
+!*      --ncpu ncpu                      Number of processors to be included in %nproc output
+!*                                       to Gaussian input files. --do-proc-mem must be set.
+!*                                       Default is 2. Note input is not checked for validity.
+!*
           call mqc_get_command_argument(i+1,command)
           ncpu = command
           j = i+2
         elseif(command.eq.'--keep-inters') then
+!
+!*      --keep-inters                    Do not delete intemediate files used in the calculation.
+!*                                       Default is to delete intermediate files.
+!*
           keep_intermediate_files=.true.
           j = i + 1
+!
+!*   4. Initial conditions
+!*
         elseIf(command.eq.'--initial-state') then
+!
+!*      --initial-state weight_vector    Initial state for simulation. For a pure state, the  
+!*                                       desired root can be input as a single integer. For a 
+!*                                       mixed state, each non-zero weighted root should be 
+!*                                       included along wih the specified weight (Default is
+!*                                       a ground state population of 1.0). Note that the input 
+!*                                       vector is normalized regardless of input values.
+!*                                   
+!*                                       Example: [1,0.5:2,0.5] specifies an initial state with 
+!*                                       50% weight on the lowest root and 50% weight on the 
+!*                                       fourth root.
+!*
           call mqc_get_command_argument(i+1,command)
           root_string = command
           j=i+2
+!
+!*   5. Applied field 
+!*
         elseIf(command.eq.'--pulse-shape') then
+!
+!*      --pulse-shape pulse              Pulse shape used in simulation. Options are:
+!*                                       1) rectangle (default)
+!*                                          E(t) = E(0)*H(t-t0)
+!*                                       2) delta
+!*                                          E(t) = E(0)*d(t-t0) 
+!*                                       3) continuous 
+!*                                          E(t) = E(0)*sin(w(t-t0))*H(t-t0)
+!*                                       4) transform limited
+!*                                          E(t) = E(0)*exp(-(t-t0)^2/2*sigma^2)*sin(omega*(t-t0))
+!*                                       5) chirped pulse
+!*                                          E(t) = E(0)*exp(-(t-t0)^2/2*sigma^2)*
+!*                                                   sin((omega+beta(t-t0))*(t-t0))
+!*                                       6) cos squared
+!*                                          E(t) = E(0)*(cos((pi/(2*sigma))*(sigma-t+t0)))**2*
+!*                                                   sin(omega*(t-t0))*H(t-t0)*H(sigma-t)
+!*
           call mqc_get_command_argument(i+1,command)
           pulseShape = command
           j = i+2
         elseIf(command.eq.'--field-vector') then
+!
+!*      --field-vector field_vector      Field polarization vector. Should be vector of length
+!*                                       three. The default is to orient on the z-axis. Note that
+!*                                       the initial vector is normalized regardless of input 
+!*                                       values.
+!*
+!*                                       Example: [0.5,0,-0.5] specifies a field orientation of 
+!*                                       1/sqrt(2) along the x axis and -1/sqrt(2) along the z axis.
+!*
           call mqc_get_command_argument(i+1,command)
           field_string = command
           j = i+2
         elseif(command.eq.'--field-size') then
+!
+!*      --field-size field_magnitude     Maximum magnitude of field vector in simulation (au)
+!*                                       (default is 0.005 au = 25.7 MV/cm = 1.752 W/m^2 in free
+!*                                       space conditions).
+!*
           call mqc_get_command_argument(i+1,command)
           read(command,'(F12.6)') field_size
           j = i + 2
         elseif(command.eq.'--t0') then
+!
+!*      --t0 time                        Time for either pulse onset or pulse maximum depending on
+!*                                       pulse type (default is 0.0 au).
+!*
           call mqc_get_command_argument(i+1,command)
           read(command,'(F12.6)') t0
           j = i + 2
         elseif(command.eq.'--omega') then
+!
+!*      --omega frequency                Frequency for pulse shapes that use it (default is 10.0 au). 
+!*
           call mqc_get_command_argument(i+1,command)
           read(command,'(F12.6)') omega
           j = i + 2
         elseif(command.eq.'--sigma') then
+!
+!*      --sigma width                    Pulse width for pulse shapes that use it (default is 0.5 au). 
+!*
           call mqc_get_command_argument(i+1,command)
           read(command,'(F12.6)') sigma
           j = i + 2
         elseif(command.eq.'--beta') then
+!
+!*      --beta shift                     Chirp parameter for pulse shapes that use it (default is 3.0 au). 
+!*
           call mqc_get_command_argument(i+1,command)
           read(command,'(F12.6)') sigma
           j = i + 2
+!
+!*   6. Simulation parameters
+!* 
         elseif(command.eq.'--tcf-start') then
+!
+!*      --tcf-start time                 Compute time correlation function starting from input time. The 
+!*                                       Fourier transform of this function when the start time is the time 
+!*                                       step after the delta pulse provides the absorption spectrum.
+!*
           call mqc_get_command_argument(i+1,command)
           allocate(tcf_start)
           read(command,'(F12.6)') tcf_start
           j = i + 2
         elseif(command.eq.'--time-step') then
+!
+!*      --time-step time_step            Time step for simulation in au (default 0.1 au = 2.42 as).
+!*
           call mqc_get_command_argument(i+1,command)
           read(command,'(F12.6)') delta_t
           j = i + 2
         elseif(command.eq.'--simulation-time') then
+!
+!*      --simulation-time time           Total simulation time in au (default is 100.0 au = 2.42 fs).
+!*
           call mqc_get_command_argument(i+1,command)
           read(command,'(F20.8)') simTime
           j = i + 2
         elseif(command.eq.'--save') then
+!
+!*      --save steps                     Save the density to a matrix file each time the specified interval
+!*                                       of steps is reached, starting with the first step. A value of zero
+!*                                       (default) means that no densities are saved.
+!*
           call mqc_get_command_argument(i+1,command)
           read(command,'(I5)') saveDen
           j = i + 2
+!
+!*   7. Nuclear potential 
+!*
         elseIf(command.eq.'--nuclear-step') then
+!
+!*      --nuclear-step file_name         File giving increment to nuclear coordinates and nuclear charge for
+!*                                       each step in the nuclear potential. 
+!*
+!*                                       WARNING! The current implementation overwrites the input matrix files.
+!*
           call mqc_get_command_argument(i+1,nucFile)
           j = i + 2
         elseif(command.eq.'--nuclear-time') then
+!
+!*      --nuclear-time nuclear_time      Time step for each change in nuclear geometry in au (default is equal
+!*                                       to simulation time so no nuclear step is taken).
+!*
           call mqc_get_command_argument(i+1,command)
           allocate(nucTime)
           read(command,'(F12.6)') nucTime
           j = i + 2
         elseif(command.eq.'--eta') then
+!
+!*      --eta absorbing potential strength
+!*                                       Strength parameter for the complex absorbing potential (CAP).
+!*
           call mqc_get_command_argument(i+1,command)
           allocate(eta)
           read(command,'(F12.6)') eta
           j = i + 2
         elseif(command.eq.'--nuclear-start') then
+!
+!*      --nuclear-start nuclear_start    Time at which to start the nuclear steps so the first step is taken
+!*                                       at nuclear_start+nuclear_time. Default is 0.0 au.
+!*
           call mqc_get_command_argument(i+1,command)
           read(command,'(F12.6)') nucStart
           j = i + 2
         elseif(command.eq.'--maxNucSteps') then
+!
+!*      --maxNucSteps nuclear_steps      Maximum number of nuclear steps. Can be used to specify the number of
+!*                                       times the nuclear increment is applied.
+!*
           call mqc_get_command_argument(i+1,command)
           allocate(maxNucSteps)
           read(command,'(I3)') maxNucSteps
           j = i + 2
         elseIf(command.eq.'--nuclear-update') then
+!
+!*      --nuclear-update nuclear_update  Method for updating the state weights after a nuclear step. Options 
+!*                                       are:
+!*                                       1) sudden (default)
+!*                                          Reweight eigenstates so that wavefunction is the same after the 
+!*                                          nuclear step, i.e. the wavefunction does not have time to respond
+!*                                          to the perturbation.
+!*                                       2) adiabatic
+!*                                          Keep eigenstate weights the same after the nuclear step, i.e. the
+!*                                          perturbation is slow enough that the wavefunction adapts to stay 
+!*                                          in the same state.
+!*
           call mqc_get_command_argument(i+1,command)
           nucUpdate = command
           call string_change_case(nucUpdate,'l')
           j = i + 2
         elseIf(command.eq.'--nucInc-script') then
+!
+!*      --function-script filename       Name of script that overwrites the nuclear step file. The script will
+!*                                       be expected to accept command line the arguments (in order) nuclear 
+!*                                       step filename and current time. This option allows nonlinear changes 
+!*                                       to the nuclear motion to be modelled (e.g. molecular vibrations). See
+!*                                       frequency_sim.py for an example of how the script should be written.
+!*
           call mqc_get_command_argument(i+1,increment_script)
           j = i + 2
         elseIf(command.eq.'--cap') then
+!
+!*      --cap cap_matrix_file            Matrix file containing the complex absorbing potential integrals.
+!*
           call mqc_get_command_argument(i+1,cap_unformatted_matrix)
           j = i + 2
+!
+!*   8. Help 
+!*
         elseIf(command.eq.'--help') then
+!
+!*      --help                           Output help documentation to terminal.
+!*
           if(command_argument_count().gt.1) call mqc_error_I('Help output requested with multiple arguments',6, &
             'command_argument_count()',command_argument_count())
           call mqc_get_command_argument(0,help_path)
@@ -330,6 +600,7 @@ program tdCIS
         
         if(nNucSteps.ge.1) then
 
+!********* section added to write out the state pops
           if(allocated(state_coeffs)) then
             tmpPop = real(conjg(state_coeffs).ewp.(state_coeffs))
             open(unit=10,file="state_pop.txt",status="unknown",position="append")
@@ -337,6 +608,7 @@ program tdCIS
             call tmpPop%print(10,'TD State populations')
             close(10)
           endif
+!***************
 
           if(.not.allocated(nucFile)) call mqc_error('No nuclear update file provided',6)
           if(allocated(increment_script)) call execute_command_line(trim(increment_script)//' '//&
@@ -488,12 +760,15 @@ program tdCIS
 !
 !       Compute the nuclear-nuclear repulsion energy.
 !
+        
         call moleculeInfo%print(iOut)
         Vnn = mqc_get_nuclear_repulsion(moleculeInfo)
         call Vnn%print(iOut,'Nuclear Repulsion Energy (au)',Blank_At_Bottom=.true.) 
 !
 !       Generate Slater determinants wavefunction expansion if orthogonal expansion requested. 
 !
+        wavefunction%nAlpha=wavefunction%nAlpha+2
+        Wavefunction%nElectrons=Wavefunction%nElectrons+2
         if(ci_string.eq.'oci') then
           call substitution_builder(sub_string,subs)
           if(iPrint.ge.1) then
@@ -528,7 +803,7 @@ program tdCIS
           nVirt = wavefunction%nBasis-nCore-activeList(1)
         endIf
 
-      core_ham=wavefunction%core_Hamiltonian
+      core_ham=wavefunction%core_Hamiltonian !****CAP REGION****
 !
       if(allocated(cap_unformatted_matrix)) then
         call temp_file2%load(cap_unformatted_matrix)
@@ -547,6 +822,7 @@ program tdCIS
 !
         if(ci_string.ne.'noci') then
           if(iPrint.ge.1) write(iOut,'(1X,A)') 'Transforming MO integrals'//NEW_LINE('A')
+          ! *** the equation below transforms core hamiltonian from AO basis to MO basis
           mo_core_ham = matmul(dagger(wavefunction%MO_Coefficients),matmul(wavefunction%core_Hamiltonian, &
               Wavefunction%MO_Coefficients))
           if(IPrint.ge.4) call mo_core_ham%print(iOut,'MO Basis Core Hamiltonian') 
@@ -602,6 +878,7 @@ program tdCIS
           if(iPrint.ge.1) write(iOut,'(1X,A,F10.4,A)') 'Dipole matrix construction time: ', &
             omp_end_time - omp_start_time, ' seconds'
 
+          !LMTLMT  ----> if(doCAP) then   
           if(allocated(cap_unformatted_matrix)) then
             write(*,*)'AMK---'
             cap_integral_MO=matmul(dagger(wavefunction%MO_Coefficients),&
@@ -612,6 +889,7 @@ program tdCIS
               Determinants=determinants, MO_Core_Ham=cap_integral_MO, SubsAIn=isubs)
             if(iprint.ge.0) call CI_cap%print(6,'SD CAP integral',Blank_At_Bottom=.true.)
           endIf
+          ! ****
 
         elseIf(ci_string.eq.'ocas') then
           if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
@@ -647,6 +925,7 @@ program tdCIS
 
         elseIf(ci_string.eq.'noci') then
           if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building nonorthogonal CI Hamiltonian, CI overlap and CI dipole matrices'
+!         loop over pairs of Slater determinants and build transition density matrices. Get the H, N and Mu CI matrices
           call CI_Hamiltonian%init(numFile,numFile,storage='StorHerm') 
           call CI_Overlap%init(numFile,numFile,storage='StorHerm') 
           do i = 1, 3
@@ -813,7 +1092,8 @@ program tdCIS
         endIf
 
 !
-!       Do loops over time-steps and propagate CI coefficients
+!       Do loops over time-steps and propagate CI coefficients in each time step using eq. 16 of 
+!       Krause et al. J. Phys. Chem., 2007, 127, 034107.
 !
         write(iOut,'(1X,A)') ' TIME PROPAGATION'//NEW_LINE('A')
         omp_start_time = omp_get_wtime()
@@ -836,16 +1116,26 @@ program tdCIS
             write(*,*) 'Dead2'
             state_coeffs = exp((-1)*imag*delta_t*wavefunction%pscf_energies).ewp.state_coeffs
             do j = 3, 1, -1
+              ! transform to dipole basis set
               state_coeffs = matmul(Xmat(j),state_coeffs) 
+              ! apply time evolution under external field
               state_coeffs = exp(imag*delta_t*td_field_vector%at(j)*dipole_eigvals(j)).ewp.state_coeffs
+              ! transform back to original basis
               state_coeffs = matmul(invXmat(j),state_coeffs)
             endDo
             if(allocated(cap_unformatted_matrix)) then
+              ! transform to CAP eigen basis
               state_coeffs = matmul(Cmat,state_coeffs)
+              ! apply CAP evolution (diagonal in CAP basis)
               state_coeffs = exp((-1)*delta_t*eta*cap_eigvals).ewp.state_coeffs
+              ! transform back from CAP eigenbasis
               state_coeffs = matmul(invCmat,state_coeffs)
             endIf
           endIf
+
+          ! ***
+          !call mqc_print(state_coeffs%norm(),6,'Norm of the state coeffcients: ')
+          ! ***
 
           call print_coeffs_and_pops(iOut,iPrint,1,state_coeffs,'TD State')
 
@@ -916,6 +1206,7 @@ program tdCIS
           else
             density = get_noci_density(td_ci_coeffs,mo_list,wavefunction%overlap_matrix,wavefunction%nBasis,&
               wavefunction%nAlpha,wavefunction%nBeta)
+            ! Apply overlap matrix to get correct electron count
             density = matmul(density, wavefunction%overlap_matrix)
             if(iPrint.ge.1.or.i.eq.maxsteps) call mqc_print(matmul(matmul(matmul(dagger(mo_list(1)),&
               wavefunction%overlap_matrix),density),matmul(wavefunction%overlap_matrix,mo_list(1))),&
@@ -973,7 +1264,10 @@ program tdCIS
 !
       contains
 !
+!     
 !     PROCEDURE get_CI_energy
+!
+!     get_CI_energy is a function that returns the energy given the Hamiltonian and CI vectors.
 !
       function get_CI_Energy(CI_Hamiltonian,CI_vectors,CI_CAP) result(energy)
         implicit none
@@ -987,7 +1281,10 @@ program tdCIS
         end if
       end function get_CI_Energy
 !
+!     
 !     PROCEDURE get_field_vector
+!
+!     get_field_vector is a function that returns the field vector at time dt*step. 
 !
       function get_field_vector(dt,step,static_field,pulseShape,t0,omega,sigma,beta) result(td_field)
         implicit none
@@ -1048,7 +1345,10 @@ program tdCIS
         end select
       end function get_field_vector
 !
+!
 !     PROCEDURE substitution_builder
+!
+!     substitution_builder is a subroutine that builds the input wavefunction substituion levels.
 !
       subroutine substitution_builder(subs_in,subs_out)
         implicit none
@@ -1110,7 +1410,10 @@ program tdCIS
         endIf
       end subroutine substitution_builder
 !    
+!
 !     PROCEDURE field_vector_builder
+!
+!     field_vector_builder is a subroutine that builds the normalized input t=0 field vector.
 !
       subroutine field_vector_builder(field_in,field_out)
         implicit none
@@ -1184,7 +1487,10 @@ program tdCIS
         field_out = field_out/field_out%norm()
       end subroutine field_vector_builder
 !    
+!
 !     PROCEDURE root_vector_builder
+!     
+!     root_vector_builder is a subroutine builds the vector of initial state weights.
 !
       subroutine root_vector_builder(root_string_in,root_vector_out)
         implicit none
@@ -1263,6 +1569,8 @@ program tdCIS
               rootSet = .true.
               weightSet = .true.
             endIf
+
+            !  Algorithm has identified a valid pair of numbers for processing.
             if(rootSet.and.weightSet) then
               if(weight.gt.1.0e0) call mqc_error("Root weight is greater than one.") 
               call root_vector_out(1)%push(root)
@@ -1276,7 +1584,11 @@ program tdCIS
         endIf
       end subroutine root_vector_builder
 !    
+!
 !     PROCEDURE print_coeffs_and_pops
+!     
+!     print_coeffs_and_pops is a subroutine that prints coefficients and 
+!     populations of a vector, using the input string to build the label
 !
       subroutine print_coeffs_and_pops(iOut,iPrint,printThresh,vector,titleString)
         implicit none
@@ -1323,7 +1635,14 @@ program tdCIS
         endIf
       end subroutine print_coeffs_and_pops
 !    
+!
 !     PROCEDURE get_rhos
+!     
+!     get_rhos is a subroutine that returns the atomic orbital transition density 
+!     matrices of two (nonorthogonal) Slater determinants, as well as the dimension
+!     of the overlap null space, the overlap and psuedo-overlap matrix elements. The
+!     sign of nullSize gives the multiple of matrix elements accounting for antisymmetry
+!     due to permutation of orbitals in the SVD.
 !
       subroutine get_rhos(rho,nIJ,pnIJ,nullSize,mo_I,mo_J,overlap,nBasis,nAlpha,nBeta)
         implicit none
@@ -1406,7 +1725,13 @@ program tdCIS
         endIf
       end subroutine get_rhos
 !
+!
 !     PROCEDURE signCheckSVD
+!     
+!     signCheckSVD is a subroutine that returns the phases of left and right
+!     singular vectors such that they are located in the upper left quadrant of
+!     the argand diagram. Optional inputs offset and dimen provide the ability
+!     to update the phases of a subset of singular vectors.
 !    
       subroutine signCheckSVD(U,S,Vdag,dimen,offset)
         implicit none
@@ -1460,7 +1785,15 @@ program tdCIS
         endDo
       end subroutine signCheckSVD
 !
-!     PROCEDURE pairDensity
+!
+!     PROCEDURE pairDens
+!
+!     pairDensity is a subroutine to calculate transition density matrix from MOs
+!     given in the diagonal overlap basis between bra and ket orbitals, i.e. 
+!     from transformed orbitals MOs:
+!     C_J' = C_J.V
+!     C_I' = U*.C_I*
+!     Incoming rho must be zeroed.
 !
       subroutine pairDensity(Svals,tMOI,tMOJ,total_rho,numBasis,DenNum)
         implicit none
@@ -1533,7 +1866,12 @@ program tdCIS
         end do
       end subroutine pairDensity
 !
+!
 !     PROCEDURE get_hij
+!
+!     get_hij is a function that returns the value of a Hamiltonian matrix element between
+!     two (nonorthogonal) determinants, given the transition density matrices and required
+!     integrals.
 !
       function get_hij(pnij,nullSize,rho,coreHam,eris,doDirectIn,fileInfo,fileName,&
           loopNumber,sh2AtMp,shlTyp,nPrmSh,prmExp,conCoef,conCoTwo,shCoor,gauss_exe,doProcMem,&
@@ -1559,6 +1897,22 @@ program tdCIS
 
         if(present(doDirectIn)) then
           doDirect = doDirectIn
+          if(.not.present(fileInfo).or.&
+            .not.present(fileName).or.&
+            .not.present(loopNumber).or.&
+            .not.present(sh2AtMp).or.&
+            .not.present(shlTyp).or.&
+            .not.present(nPrmSh).or.&
+            .not.present(prmExp).or.&
+            .not.present(conCoef).or.&
+            .not.present(conCoTwo).or.&
+            .not.present(shCoor).or.&
+            .not.present(gauss_exe).or.&
+            .not.present(mem).or.&
+            .not.present(ncpu).or.&
+            .not.present(doProcMem).or.&
+            .not.present(keep_intermediate_files)) &
+            call mqc_error('Missing data required for direct Fock matrix computation')
         else
           doDirect = .false.
         endIf
@@ -1567,7 +1921,9 @@ program tdCIS
           fMat = do_external_fock_build(fileInfo,fileName,loopNumber,rho(1),sh2AtMp,shlTyp,nPrmSh,prmExp,&
             conCoef,conCoTwo,shCoor,gauss_exe,doProcMem,mem,ncpu,keep_intermediate_files)
         else
+          ! Create a twoERISet from your array of twoERIs
           call mqc_twoeriSet_allocate(eris_set, eris)
+          ! Now use the set with the contraction function
           fMat = mqc_eri_integral_contraction(eris_set, rho(1))
           fMat = coreHam + fMat
         endIf
@@ -1582,15 +1938,22 @@ program tdCIS
           elseIf(abs(nullSize).gt.2) then
             hij = zero
           else
-            call MQC_error_I('Number of zero-overlap orbital pairs is zero',6,'nullSize',nullSize)
+            call MQC_error_I('Number of zero-overlap orbital pairs is zero, but then &
+              &NIJ should not be zero',6,'nullSize',nullSize)
           endIf
+          ! take care of antisymmetry
           hij = sign(1.0,nullSize)*hij
         else
           hij = pnij*(core_con+(half*gmat_con))
         endif
       end function get_hij
 !
+!
 !     PROCEDURE get_dij
+!
+!     get_dij is a function that returns the value of a one-electron operator matrix element
+!     between two (nonorthogonal) determinants, given the transition density matrices and 
+!     required integrals.
 !
       function get_dij(pnij,nullSize,rho,oneElInt) result(dIJ)
         implicit none
@@ -1609,7 +1972,12 @@ program tdCIS
         endIf
       end function get_dij
 !
+!
 !     PROCEDURE do_external_fock_build
+!
+!     do_external_fock_build is a function that returns the Fock matrix between two 
+!     (nonorthogonal) determinants, given a transition density matrix. The code requires
+!     a modified version of Gaussian 16.
 !
       function do_external_fock_build(temp_file,fileName,loopNumber,rho,sh2AtMp,shlTyp,nPrmSh,prmExp,&
           conCoef,conCoTwo,shCoor,gauss_exe,doProcMem,mem,ncpu,keep_intermediate_files) result(fMat)
@@ -1656,7 +2024,11 @@ program tdCIS
         endIf
       end function do_external_fock_build
 !
+!
 !     PROCEDURE write_gau_fock_file
+!
+!     Write out a Gaussian input file with non-standard route used for computing Fock matrix 
+!     with direct matrix elements. Code requires additional development Gaussian code.
 !
       subroutine write_gau_fock_file(matrixFile,diag,ahrm,doProcMem,mem,ncpu)
         implicit none
@@ -1674,6 +2046,9 @@ program tdCIS
         if(doProcMem) write(unitno,"(A13,A6)")'%nprocshared=',adjustl(ncpu)
         if(doProcMem) write(unitno,"(A5,A6)")'%mem=',adjustl(mem)
         write(unitno,"(A9)")'#P nonstd'
+!
+!       nonstandard route section; uses iop 4/5=19,4/200=4
+!
         write(unitno,*) '1/29=7,38=1,172=1/1;'
         write(unitno,*) '2/12=2,15=1,40=1/2;'
         write(unitno,*) '3/5=7,6=2,11=9,14=-4,25=1,30=1,67=1,116=7/1,2,3;'
@@ -1694,7 +2069,10 @@ program tdCIS
         close(unit=unitno)
       end subroutine write_gau_fock_file
 !
+!
 !     PROCEDURE get_noci_density
+!
+!     get_noci_density is a function that returns the NOCI one-PDM.
 !
       function get_noci_density(eigenvecs,mo_list,overlap,nBasis,nAlpha,nBeta) result(oneDM)
         implicit none
@@ -1733,7 +2111,12 @@ program tdCIS
         endIf
       end function get_noci_density
 !
+!
 !     PROCEDURE outputCheckFile
+!
+!     outputMatFile is a subroutine that outputs a checkpoint file that can then be read into 
+!     Gaussian or Gaussview. The purpose of this routine is to enable visualization of
+!     the density matrix time evolution in Gaussview.
 !
       subroutine outputCheckFile(temp_file,fileName,density,sh2AtMp,shlTyp,nPrmSh,prmExp,&
           conCoef,conCoTwo,shCoor,wavefunction) 
@@ -1785,7 +2168,10 @@ program tdCIS
         call Close_MatF(temp_file%UnitNumber)
       end subroutine outputCheckFile 
 !
+!
 !     PROCEDURE orbital_swapper
+!
+!     orbital_swapper is a subroutine that parses input and swaps molecular orbitals on the input matrix files.
 !
       subroutine orbital_swapper(alterations,mo_list)
         implicit none
@@ -1798,8 +2184,13 @@ program tdCIS
 
         alterString = trim(alterations)
         if(len(alterString).ne.0) then
+          !  Initialize orbital swap variables
           leftNum = 0
           rightNum = 0
+          !  Flags for determining current state of the string processing.  lNum and rNum
+          !  indicate whether the orbital pair is being assembled, lSet and rSet inidicate
+          !  whether the left and right orbital numbers have been processed and stored.
+          !  processString contains the characters that are being examined.
           lNum = .false.
           rNum = .false.
           lSet = .false.
@@ -1817,14 +2208,14 @@ program tdCIS
                 lNum = .true.
                 cycle
               else
-                call mqc_error("Malformed alteration string.")
+                call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
               endif
             case("0":"9")
               if(i.lt.len(alterString)) then
                 processString = trim(processString)//alterString(i:i)
                 if(.not.hasNum) hasNum = .true.
               else
-                call mqc_error("Malformed alteration string.")
+                call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
               endif
             case("a")
               if(lNum.and.hasNum) then
@@ -1836,7 +2227,7 @@ program tdCIS
                 lNum = .false.
                 rNum = .true.
               else
-                call mqc_error("Malformed alteration string.")
+                call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
               end if
             case("b")
               if(lNum.and.hasNum) then
@@ -1848,7 +2239,7 @@ program tdCIS
                 lNum = .false.
                 rNum=.true.
               else
-                call mqc_error("Malformed alteration string.")
+                call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
               end if
             case(",")
               if((lSet.and.rNum).and.hasNum) then
@@ -1859,7 +2250,7 @@ program tdCIS
                 rSet = .true.
                 lNum = .true.
               else
-                call mqc_error("Malformed alteration string.")
+                call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
               end if
             case(":")
               if((lSet.and.rNum).and.hasNum) then
@@ -1873,7 +2264,7 @@ program tdCIS
               else if((.not.lSet.and..not.rSet.and.lNum).and..not.(hasNum)) then
                 newSoln = .true.
               else
-                call mqc_error("Malformed alteration string.")
+                call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
               end if
             case("]")
               if(rNum.and.hasNum) then
@@ -1881,10 +2272,10 @@ program tdCIS
                 rNum = .false.
                 rSet = .true.
               else if(.not.(alterString(i-1:i-1).eq.':')) then
-                call mqc_error("Malformed alteration string.")
+                call mqc_error("Malformed alteration string.  Expected format:  [#a#,#b#:#a#,...]")
               end if
             case default
-              call mqc_error("Unrecognized character in alteration string input.")
+              call mqc_error("Unrecognized character in alteration string input:  "//alterString(i:i))
             end select
 
             if(lSet.and.rSet) then
@@ -1898,14 +2289,20 @@ program tdCIS
             end if
             if(newSoln) then
               solutionNum = solutionNum + 1
-              if(solutionNum.gt.size(mo_list)) call mqc_error_i('Orbital alterations error',6,'SolutionNum',SolutionNum)
+              if(solutionNum.gt.size(mo_list)) call mqc_error_i('Orbital alterations requested on &
+                &more determinants than available',6,'SolutionNum',SolutionNum,'size(mo_list)',&
+                size(mo_list))
               newSoln = .false.
             end if
           end do
         end if
       end subroutine orbital_swapper
 !    
+!
 !     PROCEDURE parse_active_space
+!
+!     parse_active_space is a subroutine that parses input for complete active space determinant 
+!     expansions.
 !
       subroutine parse_active_space(active_space,numFile,nBasis,nAlpha,nBeta,nElec,activeList,&
         inactiveList,alphaList,betaList)
@@ -1918,7 +2315,9 @@ program tdCIS
         character(len=:),allocatable::activeString
         logical::occSet,elecSet,oNum,eNum
         character(len=80)::processString
-
+!
+!       parse active space information
+!
         allocate(inactiveList(numFile))
         allocate(activeList(numFile))
         allocate(alphaList(numFile))
@@ -1933,8 +2332,15 @@ program tdCIS
             write(6,'(A)') ' Defaulting to substitutions over all orbitals in solution '//trim(num2char(i))
           endDo
         else
+          !  Initialize occupied orbitals and electron count to zero
           occNum = 0
           elecNum = 0
+          !  Flags for determining current state of the string processing.  oNum
+          !  and eNum indicate whether the occupied orbital or active electron
+          !  number for solution 'n' is currently being assembled.  occSet and
+          !  elecSet indicate whether the occupied orbital number or active
+          !  electron number have been fully assembled and stored.  processString
+          !  contains the characters that correspond to occNum or elecNum.
           oNum = .false.
           eNum = .false.
           occSet = .false.
@@ -1948,17 +2354,17 @@ program tdCIS
                 oNum = .true.
                 cycle
               else
-                call mqc_error("Malformed active space string.")
+                call mqc_error("Malformed active space string.  Expected format:  [#,#:#,#:...]")
               end if
             case("0":"9")
               if(i.lt.len(activeString)) then
                 processString = trim(processString)//activeString(i:i)
               else
-                call mqc_error("Malformed active space string.")
+                call mqc_error("Malformed active space string.  Expected format:  [#,#:#,#:...]")
               endif
             case(",")
               if(.not.oNum) then
-                call mqc_error("Malformed active space string.")
+                call mqc_error("Malformed active space string.  Expected format:  [#,#:#,#:...]")
               else
                 read(processString,'(I3)') occNum
                 processString = ''
@@ -1968,7 +2374,7 @@ program tdCIS
               end if
             case("]")
               if(.not.eNum) then
-                call mqc_error("Malformed active space string.")
+                call mqc_error("Malformed active space string.  Expected format:  [#,#:#,#:...]")
               else
                 read(processString,'(I3)') elecNum
                 elecSet = .true.
@@ -1981,37 +2387,56 @@ program tdCIS
                 oNum = .true.
                 eNum = .false.
               else
-                call mqc_error("Malformed active space string.")
+                call mqc_error("Malformed active space string.  Expected format:  [#,#:#,#:...]")
               end if
             case default
-              call mqc_error("Unrecognized character in active space input.")
+              call mqc_error("Unrecognized character in active space input:  "//activeString(i:i))
             end select
 
+            !  Algorithm has identified a valid pair of numbers for processing.
             if(occSet.and.elecSet) then
+
               maxActive = nBasis - (nElec/2) - mod(int(nElec),2) + (elecNum / 2) + mod(elecNum,2)
+
+              !  Check users requested orbitals or electrons are sensible
+              !  actually exist in the SCF results. I would hope that's not something
+              !  the user would forget to check, but I'll err on the side of caution
               if(elecNum.gt.nElec) then
-                call mqc_error("Too many active electrons requested.")
+                call mqc_error("User has requested more active electrons than exist for solution "//&
+                  num2char(solutionNum))
               else if(occNum.gt.nBasis) then
-                call mqc_error("Too many active orbitals requested.")
+                call mqc_error("User has requested more active orbitals than exist for solution "//&
+                  num2char(solutionNum))
               else if(occNum.gt.maxActive) then
-                call mqc_error("Too many active orbitals for electrons.")
+                call mqc_error("User has requested too many active orbitals for solution "//&
+                  num2char(solutionNum))
               end if
+     
               activeList(solutionNum) = occNum
               inactiveList(solutionNum) = (nelec-elecNum)/2 + mod(int(nelec-elecNum),2)
               alphaList(solutionNum) = nAlpha - inactiveList(solutionNum)
               betaList(solutionNum) = nBeta - inactiveList(solutionNum)
+     
               occSet = .false.
               elecSet = .false.
               oNum = .true.
               eNum = .false.
               processString = ''
               solutionNum = solutionNum + 1
+     
             end if
+            if((solutionNum-1).gt.numFile) call mqc_error_i('Active space specifies more input solutions than&
+              & present',6,'solutionNum',solutionNum-1,'numFile',numFile)
           end do
+          if((solutionNum-1).lt.numFile) call mqc_error_i('Active space specifies fewer input solutions than&
+            & present',6,'solutionNum',solutionNum-1,'numFile',numFile)
         end if
       end subroutine parse_active_space
 !
-!     PROCEDURE write_GauIn_file
+!
+!      PROCEDURE write_GauIn_file
+!
+!      write_GauIn_file is a subroutine that writes a Gaussian input file.
 !
       subroutine write_GauIn_file(iPrint,filename,matFile,doAppend,doProcMem,nProc,mem,route_addition,saveMat,&
         doTwoERIs,atomList,cartesians,charge,multiplicity,nucCharge)
@@ -2061,6 +2486,8 @@ program tdCIS
           write(unitnumber,'(A)') 'Title Card Required'
           write(unitnumber,'(A)') ''
           write(unitnumber,'(I3,1x,I2)') charge, multiplicity
+          if(size(atomList).ne.size(cartesians,2)) call mqc_error_i('atom name and coordinate lists are not the&
+            & same size in write_GauIn_file',6,'size(atomList)',size(atomList),'size(cartesians,2)',size(cartesians,2))
           do i = 1, size(atomList)
             if(present(nucCharge)) then
               write(unitnumber,'(1x,A,A,G0,A,1x,F15.8,1x,F15.8,1x,F15.8)') trim(atomList(i)),'(znuc=',&
@@ -2082,5 +2509,33 @@ program tdCIS
         endIf
         close(unit=unitNumber)
       end subroutine write_GauIn_file
+!
+!
+!*    NOTES
+!*      Compilation of this program requires the MQC library (https://github.com/MQCPack/mqcPack)
+!*      and the gauopen utility (http://gaussian.com/g16/gauopen.zip) and compilation with the
+!*      f08 standard.
+!*
+!*      Compilation tested using: gfortran 9.2.0
+!*
+!*      Note that subroutine Wr_LCBuf needs modifying in gauopen/qcmatrix.F as follows:
+!*        line 58:       LenBX = (LenBuf/(2*abs(NR)))*abs(NR)
+!*        line 60:       Call Wr_CBuf(IU,NTot*abs(NR),LenBX,X)
+!*
+!*      Documentation generated with robodoc. To update documentation edit robodoc.rc to
+!*      determine documentation output type and then run robodoc at the command line in the
+!*      main directory.
+!*
+!*      OpenMP parallelization requires compilation with -fopenmp flag. Set OMP_NUM_THREADS
+!*      environment variable to control the number of threads used.
+!*
+!*    AUTHORS
+!*      Lee M. Thompson, University of Louisville, lee.thompson.1@lousiville.edu
+!*      Adam M. Kinyua, University of Louisville, adam.kinyua@lousiville.edu
+!*
+!*    COPYRIGHT
+!*      (c) 2021 by Lee M. Thompson distributed under terms of the MIT license.
+!*
+!****
 !
  999  End Program tdCIS
