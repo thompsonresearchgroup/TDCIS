@@ -574,7 +574,6 @@ program tdCIS
 !     Loading the inputed matrix file
 !
       call temp_file%load(fileList(1))
-      write(*,*) 'LMTLMT in here'
       call temp_file%getmoldata(moleculeInfo)
       call moleculeInfo%nuclear_charges%print(6,'Charges')
       call temp_file%closefile()
@@ -613,18 +612,14 @@ program tdCIS
           if(.not.allocated(nucFile)) call mqc_error('No nuclear update file provided',6)
           if(allocated(increment_script)) call execute_command_line(trim(increment_script)//' '//&
             trim(nucFile)//' '//trim(num2char(nucStep*nucTime)))
-          write(*,*) 'LMTLMT here 1'
           open(newunit=iUnit,file=nucFile,status='old',iostat=io_stat_number)
-          write(*,*) 'LMTLMT here 2'
           if(io_stat_number/=0) then
             call mqc_error('Error opening nuclear update file',6)
           endIf
           read(unit=iUnit, fmt='(i2)', iostat=io_stat_number) nAtoms
-          write(*,*) 'LMTLMT here 3'
           if(nAtoms/=fileInfo%getVal('natoms',filename=fileList(1))) &
             call mqc_error_i('Import of nuclear change failed',6,'atoms on file',&
             nAtoms,'atoms on disk',MQC_Scalar_Get_Intrinsic_Integer(moleculeInfo%getNumAtoms()))
-          write(*,*) 'LMTLMT here 4'
           call newGeom%init(3,nAtoms)
           call chargeList%init(nAtoms)
           read(unit=iUnit, fmt=*)
@@ -798,9 +793,9 @@ program tdCIS
             call mqc_print(alphaList,6,'Active alpha electrons')
             call mqc_print(betaList,6,'Active beta electrons')
           endIf
-          call gen_det_str(iOut,iPrint,activeList(1),alphaList(1),betaList(1),determinants,inactiveList(1))
           nCore = inactiveList(1)
           nVirt = wavefunction%nBasis-nCore-activeList(1)
+          call gen_det_str(iOut,iPrint,activeList(1),alphaList(1),betaList(1),determinants,nCore,nVirt)
         endIf
 
       core_ham=wavefunction%core_Hamiltonian !****CAP REGION****
@@ -843,12 +838,9 @@ program tdCIS
         if(ci_string.eq.'oci') then
           if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
           call subs%unshift(0)
-          write(*,*) 'Dead1'
           isubs = subs
-          write(*,*) 'Dead2',nVirt
           call mqc_build_ci_hamiltonian(iOut,iPrint,CI_Hamiltonian,determinants,&
             MO_Core_Ham=mo_core_ham,MO_ERIs=mo_ERIs,SubsAIn=isubs)
-          write(*,*) 'Dead3'
           if(iPrint.ge.4) call CI_Hamiltonian%print(6,'CI Hamiltonian',Blank_At_Bottom=.true.)
           if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI dipole matrices'
           
@@ -880,10 +872,8 @@ program tdCIS
 
           !LMTLMT  ----> if(doCAP) then   
           if(allocated(cap_unformatted_matrix)) then
-            write(*,*)'AMK---'
             cap_integral_MO=matmul(dagger(wavefunction%MO_Coefficients),&
                             matmul(cap_integral,Wavefunction%MO_Coefficients))
-            write(*,*)'AMK000'
             if(iprint.ge.4) call cap_integral_MO%print(6,'MO CAP integral',Blank_At_Bottom=.true.)
             call mqc_build_ci_hamiltonian(iOut, iPrint, CI_Hamiltonian=CI_cap, &
               Determinants=determinants, MO_Core_Ham=cap_integral_MO, SubsAIn=isubs)
@@ -986,7 +976,6 @@ program tdCIS
 !
 !       Update state coefficients if nuclear potential has changed.
 !
-        write(*,*) 'size=',size(wavefunction%pscf_energies)
         if(nucStep.eq.0) then
           call state_coeffs%init(size(wavefunction%pscf_energies),0.0)
           do i = 1, size(nroot(1))
@@ -1055,9 +1044,7 @@ program tdCIS
             endIf
             if(iPrint.ge.4) call cap_eigvecs%print(iOut,'CI CAP Eigenvectors',Blank_At_Bottom=.true.)
             if(iprint.ge.3) call cap_eigvals%print(iOut,'CI CAP Eigenvalues',Blank_At_Bottom=.true.)
-            write(*,*)'0000000000'
             Cmat = matmul(dagger(cap_eigvecs),wavefunction%pscf_amplitudes)
-            write(*,*)'1111111111'
             call Cmat%print(iOut,'CAP TRANSFORMATION MATRIX')
             invCmat = dagger(Cmat)
             call invCmat%print(iOut,'INVERSE OF CAP TRANSFORMATION MATRIX')
@@ -1073,9 +1060,7 @@ program tdCIS
           endIf
           if(iPrint.ge.4) call cap_eigvecs%print(iOut,'CI CAP Eigenvectors',Blank_At_Bottom=.true.)
           if(iprint.ge.3) call cap_eigvals%print(iOut,'CI CAP Eigenvalues',Blank_At_Bottom=.true.)
-          write(*,*)'0000000000'
           Cmat = matmul(dagger(cap_eigvecs),wavefunction%pscf_amplitudes)
-          write(*,*)'1111111111'
           call Cmat%print(iOut,'CAP TRANSFORMATION MATRIX')
           invCmat = dagger(Cmat)
           call invCmat%print(iOut,'INVERSE OF CAP TRANSFORMATION MATRIX')
@@ -1113,7 +1098,6 @@ program tdCIS
           td_field_vector = get_field_vector(delta_t,(maxsteps*nucStep)+nucStep+i,field_vector,pulseShape,t0,omega,sigma,beta)
           call td_field_vector%print(6,'Applied field vector',Blank_At_Bottom=.true.,FormatStr='F16.10')
           if(i.gt.0) then
-            write(*,*) 'Dead2'
             state_coeffs = exp((-1)*imag*delta_t*wavefunction%pscf_energies).ewp.state_coeffs
             do j = 3, 1, -1
               ! transform to dipole basis set
