@@ -77,6 +77,17 @@ program tdCIS
       integer :: num_threads, thread_id
       real(kind=real64) :: omp_start_time, omp_end_time
 
+      ! Eta trajectory variables
+      logical :: doEtaTrajectory = .false.
+      integer :: n_eta, eta_unit, iState
+      real(kind=real64) :: eta_current
+      real(kind=real64) :: eta_delta = 1.0d-5
+      real(kind=real64) :: eta_sigma = 1.10d0
+      integer,parameter :: n_eta_default = 100
+      type(mqc_matrix) :: CI_Sum_eta
+      type(mqc_vector) :: eta_eigvals
+      type(mqc_matrix) :: eta_eigvecs
+
 !
 !*    USAGE
 !*      TDCIS [-f <matrix_file>] [--print-level <print_level>] [--print-veldip] 
@@ -501,6 +512,37 @@ program tdCIS
 !*
           call mqc_get_command_argument(i+1,cap_unformatted_matrix)
           j = i + 2
+        elseIf(command.eq.'--eta-trajectory') then
+!
+!*      --eta-trajectory                   Perform eta trajectory analysis for CAP resonance identification.
+!*                                         Uses ?_n = d(sn - 1)/(s - 1), n = 0,...,99
+!*                                         with d = 1e-5, s = 1.10 (defaults).
+!*                                         Outputs eta, Re(E), Im(E) to eta_trajectory.csv
+!*
+          doEtaTrajectory = .true.
+          j = i + 1
+        elseIf(command.eq.'--eta-delta') then
+!
+!*      --eta-delta value                  Delta parameter for eta trajectory (default: 1e-5)
+!*
+          call mqc_get_command_argument(i+1,command)
+          read(command,'(F20.10)') eta_delta
+          j = i + 2
+        elseIf(command.eq.'--eta-sigma') then
+!
+!*      --eta-sigma value                  Sigma parameter for eta trajectory (default: 1.10)
+!*
+          call mqc_get_command_argument(i+1,command)
+          read(command,'(F20.10)') eta_sigma
+          j = i + 2
+        elseIf(command.eq.'--eta') then
+!
+!*      --eta value                        CAP strength parameter for time propagation (default: 0.0)
+!*
+          call mqc_get_command_argument(i+1,command)
+          allocate(eta)
+          read(command,'(F20.10)') eta
+          j = i + 2
 !
 !*   8. Help 
 !*
@@ -762,8 +804,6 @@ program tdCIS
 !
 !       Generate Slater determinants wavefunction expansion if orthogonal expansion requested. 
 !
-        wavefunction%nAlpha=wavefunction%nAlpha+2
-        Wavefunction%nElectrons=Wavefunction%nElectrons+2
         if(ci_string.eq.'oci') then
           call substitution_builder(sub_string,subs)
           if(iPrint.ge.1) then
@@ -793,12 +833,12 @@ program tdCIS
             call mqc_print(alphaList,6,'Active alpha electrons')
             call mqc_print(betaList,6,'Active beta electrons')
           endIf
+          call gen_det_str(iOut,iPrint,activeList(1),alphaList(1),betaList(1),determinants,inactiveList(1))
           nCore = inactiveList(1)
           nVirt = wavefunction%nBasis-nCore-activeList(1)
-          call gen_det_str(iOut,iPrint,activeList(1),alphaList(1),betaList(1),determinants,nCore,nVirt)
         endIf
 
-      core_ham=wavefunction%core_Hamiltonian !****CAP REGION****
+      core_ham=wavefunction%core_Hamiltonian
 !
       if(allocated(cap_unformatted_matrix)) then
         call temp_file2%load(cap_unformatted_matrix)
@@ -846,7 +886,9 @@ program tdCIS
           
           ! OpenMP parallelization of dipole matrix construction
           omp_start_time = omp_get_wtime()
-          !$omp parallel do private(i) schedule(static)
+          !$omp parallel do default(none) &
+          !$omp& shared(wavefunction, dipole, dipoleMO, CI_Dipole, determinants, isubs, iOut, iPrint) &
+          !$omp& private(i) schedule(static)
           do i = 1, 3
             dipoleMO(i) = matmul(dagger(wavefunction%MO_Coefficients),&
               matmul(dipole(i),Wavefunction%MO_Coefficients))
@@ -870,7 +912,6 @@ program tdCIS
           if(iPrint.ge.1) write(iOut,'(1X,A,F10.4,A)') 'Dipole matrix construction time: ', &
             omp_end_time - omp_start_time, ' seconds'
 
-          !LMTLMT  ----> if(doCAP) then   
           if(allocated(cap_unformatted_matrix)) then
             cap_integral_MO=matmul(dagger(wavefunction%MO_Coefficients),&
                             matmul(cap_integral,Wavefunction%MO_Coefficients))
@@ -879,7 +920,6 @@ program tdCIS
               Determinants=determinants, MO_Core_Ham=cap_integral_MO, SubsAIn=isubs)
             if(iprint.ge.0) call CI_cap%print(6,'SD CAP integral',Blank_At_Bottom=.true.)
           endIf
-          ! ****
 
         elseIf(ci_string.eq.'ocas') then
           if(iPrint.ge.1) write(iOut,'(1X,A)') 'Building orthogonal CI Hamiltonian matrix'
@@ -890,7 +930,9 @@ program tdCIS
           
           ! OpenMP parallelization
           omp_start_time = omp_get_wtime()
-          !$omp parallel do private(i) schedule(static)
+          !$omp parallel do default(none) &
+          !$omp& shared(wavefunction, dipole, dipoleMO, CI_Dipole, determinants, isubs, iOut, iPrint) &
+          !$omp& private(i) schedule(static)
           do i = 1, 3
             dipoleMO(i) = matmul(dagger(wavefunction%MO_Coefficients),&
               matmul(dipole(i),Wavefunction%MO_Coefficients))
@@ -924,7 +966,12 @@ program tdCIS
           
           ! OpenMP parallelization of NOCI matrix element computation
           omp_start_time = omp_get_wtime()
-          !$omp parallel do collapse(1) private(i, j, k, rho, nIJ, pnIJ, nullSize, hij, dij) &
+          !$omp parallel do default(none) &
+          !$omp& shared(numFile, mo_list, wavefunction, CI_Overlap, CI_Hamiltonian, CI_Dipole, &
+          !$omp&        eris, doDirect, fileInfo, fileName, sh2AtMp, shlTyp, nPrmSh, prmExp, &
+          !$omp&        conCoef, conCoTwo, shCoor, gauss_exe, doProcMem, mem, ncpu, &
+          !$omp&        keep_intermediate_files, dipole) &
+          !$omp& private(i, j, k, rho, nIJ, pnIJ, nullSize, hij, dij) &
           !$omp& schedule(dynamic)
           do i = 1, numFile
             do j = 1, i
@@ -1005,7 +1052,10 @@ program tdCIS
 !
         ! OpenMP parallelization of dipole diagonalization
         omp_start_time = omp_get_wtime()
-        !$omp parallel do private(i) schedule(static)
+        !$omp parallel do default(none) &
+        !$omp& shared(ci_string, CI_Dipole, CI_Overlap, dipole_eigvals, dipole_eigvecs, &
+        !$omp&        wavefunction, Xmat, invXmat) &
+        !$omp& private(i) schedule(static)
         do i = 1, 3
           if (ci_string.eq.'oci'.or.ci_string.eq.'ocas') then
             call CI_Dipole(i)%diag(dipole_eigvals(i),dipole_eigvecs(i))
@@ -1066,6 +1116,70 @@ program tdCIS
           call invCmat%print(iOut,'INVERSE OF CAP TRANSFORMATION MATRIX')
         endIf
 !
+!       ============================================================
+!       ETA TRAJECTORY ANALYSIS
+!       ============================================================
+!       Performs eta trajectory calculation for CAP resonance identification.
+!       Uses ?_n = d(sn - 1)/(s - 1), n = 0, ..., 99
+!       with d = 1e-5, s = 1.10 (defaults)
+!       Outputs eta, Re(E), Im(E) for each eigenstate to CSV file.
+!
+        if(doEtaTrajectory .and. allocated(cap_unformatted_matrix)) then
+          write(iOut,'(1X,A)') ''
+          write(iOut,'(1X,A,ES10.4,A,F6.3,A,I0,A)') &
+            'Eta trajectory: d=', eta_delta, ', s=', eta_sigma, &
+            ', n=', n_eta_default, ' -> eta_trajectory.csv'
+          
+          ! Open output file for eta trajectory data (CSV format)
+          open(newunit=eta_unit, file='eta_trajectory.csv', status='replace', action='write')
+          
+          ! Write CSV header
+          write(eta_unit,'(A)') 'eta,Re(E) (a.u.),Im(E) (a.u.)'
+          
+          ! Create identity matrix for generalized eigenvalue problem
+          call CI_Overlap%identity(size(CI_Hamiltonian,1), size(CI_Hamiltonian,2))
+          
+          ! Loop over eta values (n_eta is the loop index)
+          do n_eta = 0, n_eta_default - 1
+            ! Calculate eta using the formula: ?_n = d(sn - 1)/(s - 1)
+            eta_current = eta_delta * ((eta_sigma ** dble(n_eta)) - 1.0d0) / (eta_sigma - 1.0d0)
+            
+            ! Build CI_Sum_eta = CI_Hamiltonian - i*eta*CI_CAP
+            CI_Sum_eta = CI_Hamiltonian - imag * eta_current * CI_CAP
+            
+            ! Diagonalize using generalized eigenvalue solver (handles complex symmetric matrices)
+            call CI_Sum_eta%eigensys(CI_Overlap, eta_eigvals, eta_eigvecs)
+            
+            ! Write to CSV: one row per state with eta, Re(E)+Vnn, Im(E)
+            do iState = 1, size(eta_eigvals)
+              write(eta_unit,'(ES16.8,A,ES16.8,A,ES16.8)') &
+                eta_current, ',', &
+                real(MQC_Scalar_Get_Intrinsic_Complex(eta_eigvals%at(iState))) + float(Vnn), ',', &
+                aimag(MQC_Scalar_Get_Intrinsic_Complex(eta_eigvals%at(iState)))
+            endDo
+            
+            ! Flush the buffer to ensure data is written
+            flush(eta_unit)
+            
+          endDo
+          
+          close(eta_unit)
+          write(iOut,'(1X,A)') ''
+          
+        elseIf(doEtaTrajectory .and. .not.allocated(cap_unformatted_matrix)) then
+          write(iOut,'(1X,A)') 'WARNING: --eta-trajectory requested but no CAP matrix provided (--cap).'
+          write(iOut,'(1X,A)') '         Skipping eta trajectory analysis.'
+        endIf
+!
+!       If CAP is loaded but eta was not specified, default to 0.0 (CAP disabled in time propagation)
+!
+        if(allocated(cap_unformatted_matrix) .and. .not.allocated(eta)) then
+          allocate(eta)
+          eta = 0.0d0
+          if(iPrint.ge.1) write(iOut,'(1X,A)') 'Note: --cap provided but --eta not specified. &
+            &Using eta=0.0 (CAP disabled during time propagation).'
+        endIf
+!
 !       Determine initial conditions in the basis of CI states.
 !
         if(nucStep.eq.nNucSteps.and.nucStep.ne.0) then
@@ -1117,10 +1231,6 @@ program tdCIS
             endIf
           endIf
 
-          ! ***
-          !call mqc_print(state_coeffs%norm(),6,'Norm of the state coeffcients: ')
-          ! ***
-
           call print_coeffs_and_pops(iOut,iPrint,1,state_coeffs,'TD State')
 
           call td_ci_coeffs%init(size(wavefunction%pscf_amplitudes,1))
@@ -1152,9 +1262,9 @@ program tdCIS
           call CI_Sum%eigensys(CI_Overlap,sum_eigvals,sum_eigvecs)
           
           CAP_tmp=imag*eta*CI_CAP
-          call CAP_tmp%print(6, 'CAP tmp',Blank_At_Bottom=.true.) 
+          if(iPrint.ge.4) call CAP_tmp%print(6, 'CAP tmp',Blank_At_Bottom=.true.)
           
-          call sum_eigvals%print(6, 'CI_SUM Eigvals', formatstr='(f20.10, " + ", f20.10, "i")')
+          if(iPrint.ge.2) call sum_eigvals%print(6, 'CI_SUM Eigvals', formatstr='(f24.8, " + ", f24.8, "i")')
           if (iPrint .ge. 2) call sum_eigvecs%print(iOut, 'CI_SUM Eigenvectors', Blank_At_Bottom = .true.)
           
           total_sum=0.0
@@ -1171,7 +1281,6 @@ program tdCIS
             total_sum = total_sum + CAP_State
           end do
 
-          write(*,*) 'Tracked Root:', max_index
 
           if (iPrint .ge. 0 .or. i .eq. maxsteps) then
             call final_energy%print(6, 'Energy (au)', Blank_At_Bottom = .true., &
@@ -1216,10 +1325,6 @@ program tdCIS
           endif
 
         endDo
-        
-        omp_end_time = omp_get_wtime()
-        write(iOut,'(1X,A,F10.4,A)') 'Total time propagation time: ', &
-          omp_end_time - omp_start_time, ' seconds'
 
         if(allocated(tcf_start)) then
           if(tcf_start.gt.simTime) then
